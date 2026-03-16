@@ -1,0 +1,9 @@
+local:
+  scratch_dir: /data/scratch
+  pixi_path: /home/appuser/.pixi/bin/pixi
+  poll_interval: 5
+  default_snakemake_args: []
+
+# App-level settings (optional, shown with defaults)
+# HEALTH_CACHE_TTL_SECONDS: 300
+# AUTO_CLEANUP_AFTER_HOURS: 168

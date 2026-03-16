@@ -1,0 +1,12 @@
+slurm_ssh:
+  host: hpc.example.com
+  user: myuser
+  key_path: /home/appuser/.ssh/id_rsa
+  pixi_path: /home/myuser/.pixi/bin/pixi
+  scratch_dir: /scratch/myuser/executor
+  poll_interval: 5
+  default_snakemake_args: ["--profile", "slurm"]
+
+# App-level settings (optional, shown with defaults)
+# HEALTH_CACHE_TTL_SECONDS: 300
+# AUTO_CLEANUP_AFTER_HOURS: 168

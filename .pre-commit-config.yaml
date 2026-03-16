@@ -1,0 +1,48 @@
+ci:
+  autoupdate_schedule: quarterly
+
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+  - id: check-added-large-files
+    args: ["--maxkb=2000"]
+  - id: trailing-whitespace
+  - id: end-of-file-fixer
+  - id: check-yaml
+  - id: check-json
+  - id: check-toml
+  - id: check-merge-conflict
+  - id: check-case-conflict
+  - id: mixed-line-ending
+
+  # Python - Ruff
+- repo: https://github.com/astral-sh/ruff-pre-commit
+  rev: v0.14.10
+  hooks:
+      # Run the linter
+  - id: ruff
+    args: [--fix]
+      # Run the formatter
+  - id: ruff-format
+
+  # Find common spelling mistakes in comments and docstrings
+- repo: https://github.com/codespell-project/codespell
+  rev: v2.4.1
+  hooks:
+  - id: codespell
+    args: ['--ignore-regex=(\b[A-Z]+\b)', '--ignore-words-list=ue']
+    types_or: [python, rst, markdown]
+
+  # Do YAML formatting
+- repo: https://github.com/macisamuele/language-formatters-pre-commit-hooks
+  rev: v2.15.0
+  hooks:
+  - id: pretty-format-yaml
+    args: [--autofix, --indent, '2', --preserve-quotes]
+
+  # Detect secrets
+- repo: https://github.com/gitleaks/gitleaks
+  rev: v8.30.0
+  hooks:
+  - id: gitleaks

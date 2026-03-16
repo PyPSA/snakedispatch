@@ -1,0 +1,100 @@
+[project]
+name = "snakedispatch"
+dynamic = ["version"]
+description = "FastAPI microservice for dispatching Snakemake workflows to compute backends"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.34,<1",
+    "sse-starlette>=2.2,<3",
+    "pydantic>=2.10,<3",
+    "pydantic-settings>=2.7,<3",
+    "pyyaml>=6,<7",
+]
+
+[project.optional-dependencies]
+slurm = [
+    "asyncssh>=2.18,<3",
+]
+dev = [
+    "pytest>=8,<9",
+    "pytest-asyncio>=0.25,<1",
+    "httpx>=0.28,<1",
+    "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.setuptools_scm]
+version_scheme = "no-guess-dev"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    'F',        # pyflakes
+    'E',        # pycodestyle: Error
+    'W',        # pycodestyle: Warning
+    'I',        # isort
+    'UP',       # pyupgrade
+    'PL',       # pylint
+    'PERF',     # perflint
+    'ANN',      # flake8-annotations
+    'ASYNC',    # flake8-async
+    'TID',      # flake8-tidy-imports
+    'S',        # flake8-bandit
+    'B',        # flake8-bugbear
+    'C4',       # flake8-comprehensions
+    'EM',       # flake8-errmsg
+    'G',        # flake8-logging-format
+    'PIE',      # flake8-pie
+    'T20',      # flake8-print
+    'PYI',      # flake8-pyi
+    'PT',       # flake8-pytest-style
+    'SIM',      # flake8-simplify
+    'TC',       # flake8-type-checking — NOTE: TC001 ignored below (FastAPI needs runtime imports)
+    'PTH',      # flake8-use-pathlib
+    'RUF013',   # ruff
+    'ERA',      # eradicate
+    'TRY',      # tryceratops
+]
+
+ignore = [
+    'ANN401',   # Dynamically typed expressions are forbidden
+    'ASYNC240', # Pathlib in async — trivial metadata calls, or already wrapped in to_thread
+    'B008',     # function call in default argument value
+    'PLR2004',  # Magic value used in comparison — too noisy for protocol parsing
+    'TC001',    # Move import into TYPE_CHECKING — breaks FastAPI runtime annotation resolution
+    'TC002',    # Same as TC001 for third-party imports
+    'TC003',    # Same as TC001 for stdlib imports
+]
+
+[tool.ruff.lint.per-file-ignores]
+"{test,tests,examples,doc,docs}/**" = [
+    'ERA',      # eradicate
+    'S',        # flake8-bandit
+    'B',        # flake8-bugbear
+    'EM',       # flake8-errmsg
+    'T20',      # flake8-print
+    'SIM',      # flake8-simplify
+    'ARG',      # flake8-unused-arguments
+    'PL',       # pylint
+    'TRY',      # tryceratops
+    'ANN',      # flake8-annotations
+]
+
+[tool.ruff.lint.pylint]
+max-args = 7
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
