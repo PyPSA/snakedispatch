@@ -111,8 +111,8 @@ class TestGetLogsWithDiskFallback:
         assert lines == ["disk line 1", "disk line 2"]
         assert new_offset == 2
 
-    def test_nonzero_offset_suppresses_disk_fallback(self, tmp_path):
-        """Non-zero offset with empty buffer returns empty without reading disk."""
+    def test_nonzero_offset_with_empty_buffer_falls_back_to_disk(self, tmp_path):
+        """Non-zero offset with empty buffer still falls back to disk."""
         store = JobStore(data_dir=tmp_path)
         store.create_job("j1")
         log_path = store.get_log_path("j1")
@@ -121,8 +121,8 @@ class TestGetLogsWithDiskFallback:
 
         lines, new_offset = store.get_logs_with_disk_fallback("j1", 5)
 
-        assert lines == []
-        assert new_offset == 5
+        assert lines == ["disk line 1", "disk line 2"]
+        assert new_offset == 2
 
 
 class TestRestoreFromDisk:

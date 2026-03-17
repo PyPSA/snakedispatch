@@ -46,6 +46,7 @@ if JobStatus.RUNNING.value != MONITOR_RUNNING_SENTINEL:
 
 # Marker with random string to stay unique
 MONITOR_LOG_MARKER = "---SNAKEDISPATCH-LOG-BOUNDARY-7f4e2d1a---"
+MONITOR_DEAD_SENTINEL = "DEAD"
 
 
 def _build_rsync_filter(cache_dirs: list[str]) -> str:
@@ -342,7 +343,9 @@ class SlurmSSHBackend(ComputeBackend):
                     f"tail -c +{offset + 1} {wd}/.stdout.log 2>/dev/null; "
                     f"echo '{MONITOR_LOG_MARKER}'; "
                     f"test -f {wd}/.exitcode && cat {wd}/.exitcode "
-                    f"|| echo {MONITOR_RUNNING_SENTINEL}"
+                    f"|| (kill -0 $(cat {wd}/.pid 2>/dev/null) 2>/dev/null "
+                    f"&& echo {MONITOR_RUNNING_SENTINEL} "
+                    f"|| echo {MONITOR_DEAD_SENTINEL})"
                 )
                 result = await self._run_ssh(cmd, check=False)
                 stdout = result.stdout or ""
@@ -361,7 +364,15 @@ class SlurmSSHBackend(ComputeBackend):
                         log_callback(line)
 
                 # "RUNNING" = still going
+                # "DEAD" = process killed without writing .exitcode
                 # number = exit code
+                if status_part == MONITOR_DEAD_SENTINEL:
+                    logger.warning(
+                        "Job %s: wrapper process died without writing "
+                        ".exitcode (likely OOM or SIGKILL)",
+                        job_id,
+                    )
+                    return -1
                 if status_part != MONITOR_RUNNING_SENTINEL:
                     try:
                         return int(status_part)
