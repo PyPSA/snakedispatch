@@ -266,7 +266,7 @@ class JobStore:
     ) -> tuple[list[str], int]:
         """Like get_logs, but falls back to on-disk log if no in-memory lines."""
         lines, new_offset = self.get_logs(job_id, offset)
-        if not lines and offset == 0:
+        if not lines:
             log_path = self.get_log_path(job_id)
             if log_path and log_path.exists():
                 try:
