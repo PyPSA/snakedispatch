@@ -112,6 +112,15 @@ class ComputeBackend(ABC):
         ...
 
     @abstractmethod
+    async def check_job_status(self, job_id: str, work_dir: str) -> int | None:
+        """Check if a job process has finished without blocking.
+
+        Returns:
+            Exit code if the process has exited, None if still running.
+        """
+        ...
+
+    @abstractmethod
     async def list_workflow_files(
         self,
         job_id: str,

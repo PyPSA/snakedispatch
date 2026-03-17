@@ -198,6 +198,27 @@ class LocalBackend(ComputeBackend):
 
             await asyncio.sleep(self._config.poll_interval)
 
+    async def check_job_status(self, job_id: str, work_dir: str) -> int | None:
+        """Check if a job process has finished without blocking."""
+        wd = Path(work_dir)
+        exitcode_path = wd / ".exitcode"
+        if exitcode_path.exists():
+            try:
+                return int(exitcode_path.read_text(encoding="utf-8").strip())
+            except (ValueError, OSError):
+                return None
+        pid_path = wd / ".pid"
+        if pid_path.exists():
+            try:
+                pid = int(pid_path.read_text(encoding="utf-8").strip())
+                os.kill(pid, 0)
+                return None  # still running
+            except (ProcessLookupError, PermissionError):
+                return -1  # dead without exitcode
+            except (ValueError, OSError):
+                return None
+        return None
+
     async def list_workflow_files(
         self,
         job_id: str,

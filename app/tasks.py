@@ -223,6 +223,29 @@ async def sync_job_data_loop(
                 continue
             if not record.work_dir:
                 continue
+
+            # Recover orphaned RUNNING jobs (no active monitor task)
+            if record.task is None or record.task.done():
+                try:
+                    exit_code = await backend.check_job_status(
+                        job_id, record.work_dir
+                    )
+                    if exit_code is not None:
+                        logger.warning(
+                            "Recovering orphaned job %s (exit code %d)",
+                            job_id,
+                            exit_code,
+                        )
+                        store.mark_finished(job_id, exit_code)
+                        store.persist(record)
+                        continue
+                except Exception:
+                    logger.warning(
+                        "Failed to check orphaned job %s",
+                        job_id,
+                        exc_info=True,
+                    )
+
             _flush_logs(store, job_id)
             snkmt_db_path = store.get_snkmt_db_path(job_id)
             if snkmt_db_path:

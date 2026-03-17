@@ -393,6 +393,26 @@ class SlurmSSHBackend(ComputeBackend):
 
             await asyncio.sleep(self._config.poll_interval)
 
+    async def check_job_status(self, job_id: str, work_dir: str) -> int | None:
+        """Check if a job process has finished without blocking."""
+        wd = shlex.quote(work_dir)
+        cmd = (
+            f"test -f {wd}/.exitcode && cat {wd}/.exitcode "
+            f"|| (kill -0 $(cat {wd}/.pid 2>/dev/null) 2>/dev/null "
+            f"&& echo {MONITOR_RUNNING_SENTINEL} "
+            f"|| echo {MONITOR_DEAD_SENTINEL})"
+        )
+        result = await self._run_ssh(cmd, check=False)
+        status = (result.stdout or "").strip()
+        if status == MONITOR_RUNNING_SENTINEL:
+            return None
+        if status == MONITOR_DEAD_SENTINEL:
+            return -1
+        try:
+            return int(status)
+        except ValueError:
+            return None
+
     async def check_connectivity(self) -> bool:
         """Check SSH connectivity and scratch filesystem health."""
         try:

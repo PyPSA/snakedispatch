@@ -48,6 +48,9 @@ class _StubBackend(ComputeBackend):
     async def sync_snkmt_db(self, job_id, work_dir, local_path):
         pass
 
+    async def check_job_status(self, job_id, work_dir):
+        return None
+
     async def check_connectivity(self):
         return True
 
