@@ -10,18 +10,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SNKMT_PLUGIN_VERSION = "0.1.6"
-
-
-def build_snkmt_setup_commands(pixi_path: str) -> list[str]:
-    """Return shell commands to swap the pypsa logger plugin for snkmt."""
-    pixi = shlex.quote(pixi_path)
-    return [
-        f"{pixi} remove snakemake-logger-plugin-pypsa 2>/dev/null || true",
-        f"{pixi} add snakemake-logger-plugin-snkmt=={SNKMT_PLUGIN_VERSION} 2>/dev/null",
-    ]
-
-
 def build_wrapper_script(
     pixi_path: str,
     snkmt_db_path: str,
@@ -35,15 +23,14 @@ def build_wrapper_script(
         extra_args = " " + " ".join(shlex.quote(a) for a in snakemake_args)
     pixi = shlex.quote(pixi_path)
     snkmt = shlex.quote(snkmt_db_path)
-    snk_cmd = (
-        f"{pixi} run snakemake --logger snkmt"
-        f" --logger-snkmt-db {snkmt}"
-        f"{configfile_arg}{extra_args}"
-    )
     return f"""\
 #!/bin/bash
 echo $$ > .pid
-{snk_cmd} > .stdout.log 2>&1
+SNKMT_ARGS=""
+if {pixi} run python -c "import snakemake_logger_plugin_snkmt" 2>/dev/null; then
+    SNKMT_ARGS="--logger snkmt --logger-snkmt-db {snkmt}"
+fi
+{pixi} run snakemake $SNKMT_ARGS{configfile_arg}{extra_args} > .stdout.log 2>&1
 echo $? > .exitcode
 """
 

@@ -15,7 +15,6 @@ from app.backends.base import CHUNK_SIZE, SNKMT_DB_FILENAME, ComputeBackend
 from app.config import LocalConfig
 from app.models import WorkflowFileInfo
 from app.utils import (
-    build_snkmt_setup_commands,
     build_wrapper_script,
     enforce_error_limit,
     rename_with_cleanup,
@@ -95,15 +94,6 @@ class LocalBackend(ComputeBackend):
                 await asyncio.to_thread(full_path.write_text, content)
                 logger.debug("Wrote setup file: %s", full_path)
 
-        # Install snkmt logger plugin (replaces pypsa logger if present)
-        for cmd in build_snkmt_setup_commands(self._config.pixi_path):
-            proc = await asyncio.create_subprocess_shell(
-                cmd,
-                cwd=work_dir,
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await proc.wait()
 
     async def launch(
         self,

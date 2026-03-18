@@ -37,8 +37,8 @@ _T = TypeVar("_T")
 _PRE_EXECUTION_STATUSES = frozenset({JobStatus.PENDING, JobStatus.SETUP})
 
 
-def _require_snkmt(store: JobStore, job_id: str) -> FilePath:
-    """Return the snkmt DB path."""
+def _require_snkmt(store: JobStore, job_id: str) -> tuple[FilePath, str | None]:
+    """Return the snkmt DB path and the job's work_dir (if available)."""
     record = require_job(store, job_id)
     if record.status in _PRE_EXECUTION_STATUSES:
         raise HTTPException(
@@ -62,7 +62,7 @@ def _require_snkmt(store: JobStore, job_id: str) -> FilePath:
             status_code=404,
             detail=f"snkmt database not available for job {job_id}",
         )
-    return snkmt_db
+    return snkmt_db, record.work_dir
 
 
 async def _run_snkmt_query[T](job_id: str, query: Callable[[], _T]) -> _T:
@@ -77,8 +77,20 @@ async def _run_snkmt_query[T](job_id: str, query: Callable[[], _T]) -> _T:
         ) from exc
 
 
+def _strip_work_dir(path: str, work_dir: str | None) -> str:
+    """Strip work_dir prefix from a file path, returning a relative path."""
+    if not work_dir:
+        return path
+    prefix = work_dir.rstrip("/") + "/"
+    if path.startswith(prefix):
+        return path[len(prefix):]
+    return path
+
+
 def _build_snkmt_job_response(
-    j: snkmt.JobRow, files_by_job: dict[int, list[snkmt.FileRow]]
+    j: snkmt.JobRow,
+    files_by_job: dict[int, list[snkmt.FileRow]],
+    work_dir: str | None = None,
 ) -> SnkmtJobResponse:
     """Map a JobRow to SnkmtJobResponse."""
     job_files = files_by_job.get(j["id"], [])
@@ -93,7 +105,10 @@ def _build_snkmt_job_response(
         started_at=j["started_at"],
         completed_at=j["completed_at"],
         files=[
-            SnkmtFileResponse(path=f["path"], file_type=f["file_type"])
+            SnkmtFileResponse(
+                path=_strip_work_dir(f["path"], work_dir),
+                file_type=f["file_type"],
+            )
             for f in job_files
         ],
     )
@@ -121,7 +136,9 @@ def _build_snkmt_error_response(e: snkmt.ErrorRow) -> SnkmtErrorResponse:
     )
 
 
-def _build_snkmt_workflow_response(data: snkmt.WorkflowData) -> SnkmtWorkflowResponse:
+def _build_snkmt_workflow_response(
+    data: snkmt.WorkflowData, work_dir: str | None = None
+) -> SnkmtWorkflowResponse:
     """Assemble a full SnkmtWorkflowResponse from WorkflowData.
 
     Groups jobs by rule, builds nested rule responses, and maps errors.
@@ -130,7 +147,7 @@ def _build_snkmt_workflow_response(data: snkmt.WorkflowData) -> SnkmtWorkflowRes
     for j in data.jobs:
         rule_name = j["rule_name"] or ""
         jobs_by_rule.setdefault(rule_name, []).append(
-            _build_snkmt_job_response(j, data.files_by_job)
+            _build_snkmt_job_response(j, data.files_by_job, work_dir)
         )
 
     if data.workflow is None or data.workflow_id is None:
@@ -158,14 +175,14 @@ async def get_workflow(
     store: Annotated[JobStore, Depends(get_store)],
 ) -> SnkmtWorkflowResponse:
     """Full workflow overview: rules with nested jobs+files, errors, rulegraph."""
-    snkmt_db = _require_snkmt(store, job_id)
+    snkmt_db, work_dir = _require_snkmt(store, job_id)
 
     data = await _run_snkmt_query(job_id, lambda: snkmt.fetch_workflow_data(snkmt_db))
 
     if data.workflow is None or data.workflow_id is None:
         raise HTTPException(status_code=404, detail="Workflow not found in snkmt DB")
 
-    return _build_snkmt_workflow_response(data)
+    return _build_snkmt_workflow_response(data, work_dir)
 
 
 @router.get("/jobs/{job_id}/workflow/jobs", response_model=list[SnkmtJobResponse])
@@ -174,10 +191,13 @@ async def get_workflow_jobs(
     store: Annotated[JobStore, Depends(get_store)],
 ) -> list[SnkmtJobResponse]:
     """List all snakemake jobs with timing, status, and files."""
-    snkmt_db = _require_snkmt(store, job_id)
+    snkmt_db, work_dir = _require_snkmt(store, job_id)
 
     result = await _run_snkmt_query(job_id, lambda: snkmt.fetch_workflow_jobs(snkmt_db))
-    return [_build_snkmt_job_response(j, result.files_by_job) for j in result.jobs]
+    return [
+        _build_snkmt_job_response(j, result.files_by_job, work_dir)
+        for j in result.jobs
+    ]
 
 
 @router.get(
@@ -190,7 +210,7 @@ async def get_workflow_rule(
     store: Annotated[JobStore, Depends(get_store)],
 ) -> SnkmtRuleResponse:
     """Get a single rule with its jobs and files."""
-    snkmt_db = _require_snkmt(store, job_id)
+    snkmt_db, work_dir = _require_snkmt(store, job_id)
 
     result = await _run_snkmt_query(
         job_id, lambda: snkmt.fetch_rule_jobs(snkmt_db, rule_name)
@@ -201,7 +221,10 @@ async def get_workflow_rule(
             status_code=404, detail=f"Rule '{rule_name}' not found in workflow"
         )
 
-    rule_jobs = [_build_snkmt_job_response(j, result.files_by_job) for j in result.jobs]
+    rule_jobs = [
+        _build_snkmt_job_response(j, result.files_by_job, work_dir)
+        for j in result.jobs
+    ]
 
     return _build_snkmt_rule_response(result.rule, rule_jobs)
 
@@ -218,13 +241,17 @@ async def get_workflow_job_files(
     store: Annotated[JobStore, Depends(get_store)],
 ) -> list[SnkmtFileResponse]:
     """Files for a specific snakemake job."""
-    snkmt_db = _require_snkmt(store, job_id)
+    snkmt_db, work_dir = _require_snkmt(store, job_id)
 
     files_raw = await _run_snkmt_query(
         job_id, lambda: snkmt.fetch_job_files(snkmt_db, snakemake_job_id)
     )
     return [
-        SnkmtFileResponse(path=f["path"], file_type=f["file_type"]) for f in files_raw
+        SnkmtFileResponse(
+            path=_strip_work_dir(f["path"], work_dir),
+            file_type=f["file_type"],
+        )
+        for f in files_raw
     ]
 
 
@@ -237,7 +264,7 @@ async def get_workflow_rulegraph(
     store: Annotated[JobStore, Depends(get_store)],
 ) -> dict[str, Any]:
     """Return the rulegraph JSON for the workflow."""
-    snkmt_db = _require_snkmt(store, job_id)
+    snkmt_db, _work_dir = _require_snkmt(store, job_id)
 
     rulegraph = await _run_snkmt_query(job_id, lambda: snkmt.fetch_rulegraph(snkmt_db))
 

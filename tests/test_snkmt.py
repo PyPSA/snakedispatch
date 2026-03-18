@@ -9,7 +9,12 @@ from fastapi import HTTPException
 
 from app import snkmt
 from app.models import JobStatus
-from app.routes.snkmt import _build_snkmt_job_response, _require_snkmt, _run_snkmt_query
+from app.routes.snkmt import (
+    _build_snkmt_job_response,
+    _require_snkmt,
+    _run_snkmt_query,
+    _strip_work_dir,
+)
 from tests.conftest import SAMPLE_WORKFLOW_ID
 
 _EMPTY_WORKFLOWS_SCHEMA = (
@@ -77,6 +82,21 @@ class TestBuildJobResponse:
         )
         assert len(resp.files) == 1
         assert resp.files[0].path == "data/input.txt"
+
+    def test_strips_work_dir_from_file_paths(self):
+        files_by_job = {
+            1: [
+                {"path": "/scratch/jobs/abc/results/output.nc", "file_type": "OUTPUT"},
+                {"path": "/scratch/jobs/abc/input/data.csv", "file_type": "INPUT"},
+            ]
+        }
+        resp = _build_snkmt_job_response(
+            _make_job(id=1, snakemake_id=1),
+            files_by_job=files_by_job,
+            work_dir="/scratch/jobs/abc",
+        )
+        assert resp.files[0].path == "results/output.nc"
+        assert resp.files[1].path == "input/data.csv"
 
     def test_none_rule_name_becomes_empty_string(self):
         resp = _build_snkmt_job_response(_make_job(rule_name=None), files_by_job={})
@@ -146,8 +166,37 @@ class TestRequireSnkmt:
 
         shutil.copy(snkmt_db, job_dir / "snkmt.db")
 
-        db_path = _require_snkmt(store, "job-ok")
+        db_path, work_dir = _require_snkmt(store, "job-ok")
         assert db_path.exists()
+        assert work_dir is None
+
+
+class TestStripWorkDir:
+    def test_strips_matching_prefix(self):
+        result = _strip_work_dir("/scratch/jobs/abc/output.nc", "/scratch/jobs/abc")
+        assert result == "output.nc"
+
+    def test_strips_prefix_with_trailing_slash(self):
+        result = _strip_work_dir("/scratch/jobs/abc/output.nc", "/scratch/jobs/abc/")
+        assert result == "output.nc"
+
+    def test_returns_original_when_no_match(self):
+        result = _strip_work_dir("/other/path/file.txt", "/scratch/jobs/abc")
+        assert result == "/other/path/file.txt"
+
+    def test_returns_original_when_work_dir_is_none(self):
+        result = _strip_work_dir("/scratch/jobs/abc/output.nc", None)
+        assert result == "/scratch/jobs/abc/output.nc"
+
+    def test_returns_original_when_work_dir_is_empty(self):
+        result = _strip_work_dir("/scratch/jobs/abc/output.nc", "")
+        assert result == "/scratch/jobs/abc/output.nc"
+
+    def test_nested_path(self):
+        result = _strip_work_dir(
+            "/scratch/jobs/abc/results/sub/file.nc", "/scratch/jobs/abc"
+        )
+        assert result == "results/sub/file.nc"
 
 
 class TestGetWorkflow:

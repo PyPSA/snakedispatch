@@ -269,13 +269,6 @@ class SlurmSSHBackend(ComputeBackend):
                         await f.write(content)
                     logger.debug("Wrote setup file: %s", full_path)
 
-        # Install snkmt logger plugin (replaces pypsa logger if present)
-        for cmd in build_snkmt_setup_commands(self._config.pixi_path):
-            await self._run_ssh(
-                f"cd {shlex.quote(work_dir)} && {cmd}",
-                check=False,
-                timeout=300,
-            )
 
     async def launch(
         self,
