@@ -527,7 +527,7 @@ class TestGetConn:
 
 
 class TestCleanupSlurm:
-    async def test_cleanup_issues_three_separate_ssh_commands(self, backend):
+    async def test_cleanup_issues_four_separate_ssh_commands(self, backend):
         ssh_calls: list[str] = []
 
         async def run_ssh(cmd, **kwargs):
@@ -540,7 +540,8 @@ class TestCleanupSlurm:
         with patch.object(backend, "_run_ssh", side_effect=run_ssh):
             await backend.cleanup("job-1", "/scratch/jobs/job-1")
 
-        assert len(ssh_calls) == 3
-        assert any("kill" in cmd for cmd in ssh_calls)
+        assert len(ssh_calls) == 4
+        assert any("kill" in cmd and "kill -9" not in cmd for cmd in ssh_calls)
+        assert any("kill -9" in cmd for cmd in ssh_calls)
         assert any("scancel" in cmd for cmd in ssh_calls)
         assert any("rm -rf" in cmd for cmd in ssh_calls)

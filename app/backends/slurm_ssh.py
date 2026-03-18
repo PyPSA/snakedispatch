@@ -19,7 +19,6 @@ from app.backends.base import CHUNK_SIZE, SNKMT_DB_FILENAME, ComputeBackend
 from app.config import SlurmSSHConfig
 from app.models import JobStatus, WorkflowFileInfo
 from app.utils import (
-    build_snkmt_setup_commands,
     build_wrapper_script,
     enforce_error_limit,
     rename_with_cleanup,
@@ -527,9 +526,17 @@ class SlurmSSHBackend(ComputeBackend):
         work_dir: str,
     ) -> None:
         # 1. Kill the wrapper process if a PID file exists
+        pid_file = f"{shlex.quote(work_dir)}/.pid"
         await self._run_ssh(
-            f"test -f {shlex.quote(work_dir)}/.pid && "
-            f"kill $(cat {shlex.quote(work_dir)}/.pid) 2>/dev/null || true",
+            f"test -f {pid_file} && "
+            f"kill $(cat {pid_file}) 2>/dev/null || true",
+            check=False,
+        )
+        # Wait before sending SIGKILL in case SIGTERM wasn't enough
+        await asyncio.sleep(5)
+        await self._run_ssh(
+            f"test -f {pid_file} && "
+            f"kill -9 $(cat {pid_file}) 2>/dev/null || true",
             check=False,
         )
         # 2. Cancel only SLURM jobs launched from this work_dir

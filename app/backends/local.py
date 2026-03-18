@@ -320,6 +320,8 @@ class LocalBackend(ComputeBackend):
             try:
                 pid = int(pid_path.read_text().strip())
                 os.kill(pid, signal.SIGTERM)
+                await asyncio.sleep(5)
+                os.kill(pid, signal.SIGKILL)
             except ProcessLookupError as exc:
                 logger.debug("Process already gone for job %s: %s", job_id, exc)
             except (ValueError, OSError) as exc:

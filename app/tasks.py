@@ -179,8 +179,9 @@ async def execute_job(
         )
 
     except asyncio.CancelledError:
-        logger.info("Job %s was cancelled", job_id)
-        store._mark_cancelled(job_id)
+        if record.status not in TERMINAL_STATUSES:
+            logger.info("Job %s was cancelled", job_id)
+            store._mark_cancelled(job_id)
         raise
 
     except Exception as exc:
@@ -224,27 +225,27 @@ async def sync_job_data_loop(
             if not record.work_dir:
                 continue
 
-            # Recover orphaned RUNNING jobs (no active monitor task)
-            if record.task is None or record.task.done():
-                try:
-                    exit_code = await backend.check_job_status(
-                        job_id, record.work_dir
-                    )
-                    if exit_code is not None:
-                        logger.warning(
-                            "Recovering orphaned job %s (exit code %d)",
-                            job_id,
-                            exit_code,
-                        )
-                        store.mark_finished(job_id, exit_code)
-                        store.persist(record)
-                        continue
-                except Exception:
+            try:
+                exit_code = await backend.check_job_status(
+                    job_id, record.work_dir
+                )
+                if exit_code is not None:
                     logger.warning(
-                        "Failed to check orphaned job %s",
+                        "Recovering stuck job %s (exit code %d)",
                         job_id,
-                        exc_info=True,
+                        exit_code,
                     )
+                    store.mark_finished(job_id, exit_code)
+                    store.persist(record)
+                    if record.task and not record.task.done():
+                        record.task.cancel()
+                    continue
+            except Exception:
+                logger.warning(
+                    "Failed to check job %s",
+                    job_id,
+                    exc_info=True,
+                )
 
             _flush_logs(store, job_id)
             snkmt_db_path = store.get_snkmt_db_path(job_id)
