@@ -23,7 +23,7 @@ FROM python:3.13-slim
 
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends sudo curl ca-certificates && rm -rf /var/lib/apt/lists/* && \
+RUN apt-get update && apt-get install -y --no-install-recommends sudo curl ca-certificates gosu && rm -rf /var/lib/apt/lists/* && \
     groupadd -r appuser -g 1000 && \
     useradd -r -u 1000 -g appuser -m -s /bin/bash appuser && \
     echo "appuser ALL=(ALL) NOPASSWD: /usr/bin/apt-get" >> /etc/sudoers.d/appuser && \
@@ -35,8 +35,6 @@ COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 COPY --from=builder --chown=appuser:appuser /app/app /app/app
 COPY --chown=appuser:appuser pyproject.toml uv.lock ./
 COPY --chown=appuser:appuser entrypoint.sh /app/entrypoint.sh
-
-USER appuser
 
 ENV PATH="/app/.venv/bin:$PATH"
 
