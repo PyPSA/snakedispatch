@@ -4,11 +4,29 @@ import contextlib
 import logging
 import shlex
 from typing import TYPE_CHECKING
+from urllib.parse import urlparse
 
 if TYPE_CHECKING:
     from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+def bare_repo_dir(scratch_dir: str, url: str) -> str:
+    """Map a workflow URL to a local bare repo path under scratch_dir."""
+    parsed = urlparse(url)
+    path = parsed.path.strip("/").removesuffix(".git")
+    return f"{scratch_dir}/repos/{parsed.hostname}/{path}.git"
+
+
+def parse_default_branch(ls_remote_output: str) -> str:
+    """Extract branch name from ``git ls-remote --symref`` output. Falls back to ``"HEAD"``."""
+    for line in ls_remote_output.splitlines():
+        if line.startswith("ref: "):
+            ref_part = line.split("\t", 1)[0]
+            return ref_part.removeprefix("ref: refs/heads/")
+    return "HEAD"
+
 
 def build_wrapper_script(
     pixi_path: str,

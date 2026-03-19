@@ -233,6 +233,7 @@ def mock_backend():
     backend.save_cache = AsyncMock()
     backend.check_connectivity = AsyncMock(return_value=True)
     backend.sync_snkmt_db = AsyncMock()
+    backend.resolve_job_logs = MagicMock()
     return backend
 
 

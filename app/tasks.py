@@ -226,9 +226,7 @@ async def sync_job_data_loop(
                 continue
 
             try:
-                exit_code = await backend.check_job_status(
-                    job_id, record.work_dir
-                )
+                exit_code = await backend.check_job_status(job_id, record.work_dir)
                 if exit_code is not None:
                     logger.warning(
                         "Recovering stuck job %s (exit code %d)",

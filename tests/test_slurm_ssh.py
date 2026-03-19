@@ -10,6 +10,7 @@ from app.backends.slurm_ssh import (
     _build_rsync_filter,
 )
 from app.config import SlurmSSHConfig
+from app.models import SnkmtJobResponse
 from app.utils import build_wrapper_script
 
 
@@ -306,24 +307,28 @@ class TestSaveCache:
 
 
 class TestPrepareUrl:
-    async def test_url_workflow_runs_git_clone(self, backend):
-        clone_result = MagicMock()
-        clone_result.exit_status = 0
-        clone_result.stdout = ""
+    async def test_url_workflow_inits_bare_repo_and_creates_worktree(self, backend):
+        ok = MagicMock()
+        ok.exit_status = 0
+        ok.stdout = ""
+
+        ls_remote_result = MagicMock()
+        ls_remote_result.exit_status = 0
+        ls_remote_result.stdout = "ref: refs/heads/main\tHEAD\nabc123\tHEAD\n"
 
         sha_result = MagicMock()
         sha_result.exit_status = 0
-        sha_result.stdout = "abc123\nmain\n"
+        sha_result.stdout = "abc123\n"
 
-        call_count = 0
+        ssh_calls: list[str] = []
 
         async def run_ssh(cmd, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                assert "git clone" in cmd
-                return clone_result
-            return sha_result
+            ssh_calls.append(cmd)
+            if "ls-remote" in cmd:
+                return ls_remote_result
+            if "rev-parse" in cmd:
+                return sha_result
+            return ok
 
         with patch.object(backend, "_run_ssh", side_effect=run_ssh):
             work_dir, git_ref, git_sha = await backend.prepare(
@@ -334,31 +339,101 @@ class TestPrepareUrl:
         assert git_sha == "abc123"
         assert git_ref == "main"
 
-    async def test_url_with_ref_passes_branch_to_clone(self, backend):
-        clone_result = MagicMock()
-        clone_result.exit_status = 0
-        clone_result.stdout = ""
+        assert any("git init --bare" in cmd for cmd in ssh_calls)
+        assert any("fetch" in cmd for cmd in ssh_calls)
+        assert any("worktree add --detach" in cmd for cmd in ssh_calls)
+        assert any("rev-parse HEAD" in cmd for cmd in ssh_calls)
+        assert any("update-ref -d" in cmd for cmd in ssh_calls)
+
+    async def test_url_with_ref_fetches_to_job_scoped_ref(self, backend):
+        ok = MagicMock()
+        ok.exit_status = 0
+        ok.stdout = ""
 
         sha_result = MagicMock()
         sha_result.exit_status = 0
-        sha_result.stdout = "deadbeef\nv1.0\n"
+        sha_result.stdout = "deadbeef\n"
 
-        cloned_cmd: list[str] = []
+        ssh_calls: list[str] = []
 
         async def run_ssh(cmd, **kwargs):
-            cloned_cmd.append(cmd)
-            if "git clone" in cmd:
-                return clone_result
-            return sha_result
+            ssh_calls.append(cmd)
+            if "rev-parse" in cmd:
+                return sha_result
+            return ok
 
         with patch.object(backend, "_run_ssh", side_effect=run_ssh):
-            await backend.prepare(
+            work_dir, git_ref, git_sha = await backend.prepare(
                 "job-1", "https://github.com/org/repo.git", git_ref="v1.0"
             )
 
-        clone_cmd = next(c for c in cloned_cmd if "git clone" in c)
-        assert "--branch" in clone_cmd
-        assert "v1.0" in clone_cmd
+        assert git_ref == "v1.0"
+        fetch_cmd = next(c for c in ssh_calls if "fetch" in c)
+        assert "v1.0" in fetch_cmd
+        assert "refs/snakedispatch/job-1" in fetch_cmd
+        # No ls-remote when ref is provided
+        assert not any("ls-remote" in cmd for cmd in ssh_calls)
+
+    async def test_prepare_resolves_default_branch(self, backend):
+        ok = MagicMock()
+        ok.exit_status = 0
+        ok.stdout = ""
+
+        ls_remote_result = MagicMock()
+        ls_remote_result.exit_status = 0
+        ls_remote_result.stdout = "ref: refs/heads/develop\tHEAD\nsha1\tHEAD\n"
+
+        sha_result = MagicMock()
+        sha_result.exit_status = 0
+        sha_result.stdout = "sha256abc\n"
+
+        ssh_calls: list[str] = []
+
+        async def run_ssh(cmd, **kwargs):
+            ssh_calls.append(cmd)
+            if "ls-remote" in cmd:
+                return ls_remote_result
+            if "rev-parse" in cmd:
+                return sha_result
+            return ok
+
+        with patch.object(backend, "_run_ssh", side_effect=run_ssh):
+            work_dir, git_ref, git_sha = await backend.prepare(
+                "job-1", "https://github.com/org/repo.git"
+            )
+
+        assert git_ref == "develop"
+        assert git_sha == "sha256abc"
+        assert any("ls-remote" in cmd for cmd in ssh_calls)
+
+    async def test_prepare_pr_ref(self, backend):
+        ok = MagicMock()
+        ok.exit_status = 0
+        ok.stdout = ""
+
+        sha_result = MagicMock()
+        sha_result.exit_status = 0
+        sha_result.stdout = "pr-sha-123\n"
+
+        ssh_calls: list[str] = []
+
+        async def run_ssh(cmd, **kwargs):
+            ssh_calls.append(cmd)
+            if "rev-parse" in cmd:
+                return sha_result
+            return ok
+
+        with patch.object(backend, "_run_ssh", side_effect=run_ssh):
+            work_dir, git_ref, git_sha = await backend.prepare(
+                "job-1",
+                "https://github.com/org/repo.git",
+                git_ref="refs/pull/123/head",
+            )
+
+        assert git_ref == "refs/pull/123/head"
+        assert git_sha == "pr-sha-123"
+        fetch_cmd = next(c for c in ssh_calls if "fetch" in c)
+        assert "refs/pull/123/head" in fetch_cmd
 
 
 class TestMonitorByteOffset:
@@ -424,16 +499,28 @@ class TestMonitorErrorRecovery:
 
 
 class TestPrepare:
-    async def test_prepare_git_clone_runs_ssh_command(self, backend):
-        result = MagicMock()
-        result.stdout = "abc123\nmain\n"
-        result.exit_status = 0
+    async def test_prepare_git_url_runs_bare_repo_flow(self, backend):
+        ok = MagicMock()
+        ok.exit_status = 0
+        ok.stdout = ""
+
+        ls_remote_result = MagicMock()
+        ls_remote_result.exit_status = 0
+        ls_remote_result.stdout = "ref: refs/heads/main\tHEAD\nabc123\tHEAD\n"
+
+        sha_result = MagicMock()
+        sha_result.exit_status = 0
+        sha_result.stdout = "abc123\n"
 
         ssh_calls: list[str] = []
 
         async def run_ssh(cmd, **kwargs):
             ssh_calls.append(cmd)
-            return result
+            if "ls-remote" in cmd:
+                return ls_remote_result
+            if "rev-parse" in cmd:
+                return sha_result
+            return ok
 
         with patch.object(backend, "_run_ssh", side_effect=run_ssh):
             work_dir, git_ref, git_sha = await backend.prepare(
@@ -441,7 +528,7 @@ class TestPrepare:
             )
 
         assert work_dir == backend.work_dir("job-1")
-        assert any("git clone" in cmd for cmd in ssh_calls)
+        assert any("git init --bare" in cmd for cmd in ssh_calls)
 
     async def test_prepare_local_upload_uses_upload_dir(self, backend, tmp_path):
         src = tmp_path / "workflow"
@@ -524,6 +611,69 @@ class TestGetConn:
         _, second_kwargs = connect_calls[1]
         assert second_kwargs["host"] == "hpc.example.com"
         assert second_kwargs["tunnel"] is mock_tunnel
+
+
+class TestResolveJobLogs:
+    def test_matches_log_to_job_by_rule_and_wildcards(self, backend):
+        jobs = [
+            SnkmtJobResponse(
+                snakemake_id=1,
+                rule="solve",
+                status="finished",
+                wildcards={"country": "DE", "year": "2030"},
+            ),
+        ]
+        workflow_files = [
+            {"path": "logs/slurm/solve/country=DE,year=2030/12345.out"},
+        ]
+        backend.resolve_job_logs(jobs, workflow_files)
+        assert jobs[0].log == "logs/slurm/solve/country=DE,year=2030/12345.out"
+
+    def test_picks_latest_slurm_id_on_retry(self, backend):
+        jobs = [
+            SnkmtJobResponse(
+                snakemake_id=1,
+                rule="solve",
+                status="finished",
+                wildcards={"a": "1"},
+            ),
+        ]
+        workflow_files = [
+            {"path": "logs/slurm/solve/a=1/100.out"},
+            {"path": "logs/slurm/solve/a=1/200.out"},
+            {"path": "logs/slurm/solve/a=1/150.out"},
+        ]
+        backend.resolve_job_logs(jobs, workflow_files)
+        assert jobs[0].log == "logs/slurm/solve/a=1/200.out"
+
+    def test_no_wildcards_uses_rule_only(self, backend):
+        jobs = [
+            SnkmtJobResponse(
+                snakemake_id=1, rule="all", status="finished", wildcards=None
+            ),
+        ]
+        workflow_files = [{"path": "logs/slurm/all/999.out"}]
+        backend.resolve_job_logs(jobs, workflow_files)
+        assert jobs[0].log == "logs/slurm/all/999.out"
+
+    def test_no_matching_log_leaves_none(self, backend):
+        jobs = [
+            SnkmtJobResponse(
+                snakemake_id=1, rule="solve", status="finished", wildcards={"a": "1"}
+            ),
+        ]
+        workflow_files = [{"path": "logs/slurm/other_rule/a=1/100.out"}]
+        backend.resolve_job_logs(jobs, workflow_files)
+        assert jobs[0].log is None
+
+    def test_none_workflow_files(self, backend):
+        jobs = [
+            SnkmtJobResponse(
+                snakemake_id=1, rule="solve", status="finished", wildcards=None
+            ),
+        ]
+        backend.resolve_job_logs(jobs, None)
+        assert jobs[0].log is None
 
 
 class TestCleanupSlurm:

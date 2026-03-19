@@ -166,9 +166,10 @@ class TestRequireSnkmt:
 
         shutil.copy(snkmt_db, job_dir / "snkmt.db")
 
-        db_path, work_dir = _require_snkmt(store, "job-ok")
+        db_path, work_dir, workflow_files = _require_snkmt(store, "job-ok")
         assert db_path.exists()
         assert work_dir is None
+        assert workflow_files is None
 
 
 class TestStripWorkDir:

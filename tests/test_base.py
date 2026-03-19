@@ -21,8 +21,14 @@ class _StubBackend(ComputeBackend):
     def work_dir(self, job_id: str) -> str:
         return f"/work/{job_id}"
 
-    async def prepare(self, job_id, workflow, git_ref=None):
-        return ("", None, None)
+    def _scratch_dir(self) -> str:
+        return "/scratch"
+
+    async def _run_git_cmd(self, *args: str) -> str:
+        return ""
+
+    async def _copy_local_workflow(self, src: str, dst: str) -> None:
+        pass
 
     async def setup(self, job_id, work_dir, extra_files=None):
         pass

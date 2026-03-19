@@ -17,7 +17,7 @@ except ImportError as _err:
 
 from app.backends.base import CHUNK_SIZE, SNKMT_DB_FILENAME, ComputeBackend
 from app.config import SlurmSSHConfig
-from app.models import JobStatus, WorkflowFileInfo
+from app.models import JobStatus, SnkmtJobResponse, WorkflowFileInfo
 from app.utils import (
     build_wrapper_script,
     enforce_error_limit,
@@ -218,34 +218,21 @@ class SlurmSSHBackend(ComputeBackend):
                 msg = f"local tar failed with exit {local_proc.returncode}"
                 raise RuntimeError(msg)
 
-    async def prepare(
-        self,
-        job_id: str,
-        workflow: str,
-        git_ref: str | None = None,
-    ) -> tuple[str, str | None, str | None]:
-        """Clone/upload workflow and return (work_dir, git_ref, git_sha)."""
-        work_dir = self.work_dir(job_id)
-        git_sha: str | None = None
+    def _scratch_dir(self) -> str:
+        return self._config.scratch_dir
 
-        if workflow.startswith(("http://", "https://")):
-            cmd = "git clone --depth=1 "
-            if git_ref:
-                cmd += f"--branch {shlex.quote(git_ref)} "
-            cmd += f"{shlex.quote(workflow)} {shlex.quote(work_dir)}"
-            await self._run_ssh(cmd)
+    async def _run_git_cmd(self, *args: str) -> str:
+        """Run a git command over SSH, returning stdout."""
+        quoted = [shlex.quote(a) for a in args]
+        # For init, ensure parent dirs exist remotely
+        if "init" in args:
+            repo_path = shlex.quote(args[-1])
+            await self._run_ssh(f"mkdir -p $(dirname {repo_path})")
+        result = await self._run_ssh(" ".join(quoted))
+        return result.stdout or ""
 
-            result = await self._run_ssh(
-                f"git -C {shlex.quote(work_dir)} rev-parse HEAD && "
-                f"git -C {shlex.quote(work_dir)} rev-parse --abbrev-ref HEAD"
-            )
-            lines = result.stdout.strip().splitlines()
-            git_sha = lines[0] if lines else None
-            git_ref = lines[1] if len(lines) > 1 else None
-        else:
-            await self._upload_dir(workflow, work_dir)
-
-        return work_dir, git_ref, git_sha
+    async def _copy_local_workflow(self, src: str, dst: str) -> None:
+        await self._upload_dir(src, dst)
 
     async def setup(
         self,
@@ -267,7 +254,6 @@ class SlurmSSHBackend(ComputeBackend):
                     async with sftp.open(full_path, "w") as f:
                         await f.write(content)
                     logger.debug("Wrote setup file: %s", full_path)
-
 
     async def launch(
         self,
@@ -520,6 +506,45 @@ class SlurmSSHBackend(ComputeBackend):
         finally:
             await self._run_ssh(f"rm -f {shlex.quote(remote_bak)}", check=False)
 
+    def resolve_job_logs(
+        self,
+        jobs: list[SnkmtJobResponse],
+        workflow_files: list[WorkflowFileInfo] | None,
+    ) -> None:
+        """Match slurm log files to jobs via structured path convention.
+
+        Expects logs at: logs/slurm/{rule}/{wildcards_string}/{slurm_id}.out
+        If multiple logs exist (retries), picks the latest (highest slurm ID).
+        """
+        # Index slurm log files by directory prefix
+        slurm_logs: dict[str, list[str]] = {}
+        if workflow_files:
+            for wf in workflow_files:
+                p = wf["path"]
+                if p.startswith("logs/slurm/") and p.endswith(".out"):
+                    dir_prefix = p.rsplit("/", 1)[0]
+                    slurm_logs.setdefault(dir_prefix, []).append(p)
+
+        def _slurm_id(path: str) -> int:
+            fname = path.rsplit("/", 1)[-1].removesuffix(".out")
+            try:
+                return int(fname)
+            except ValueError:
+                return -1
+
+        for job in jobs:
+            if job.wildcards:
+                wildcards_str = ",".join(
+                    f"{k}={v}" for k, v in sorted(job.wildcards.items())
+                )
+                slurm_dir = f"logs/slurm/{job.rule}/{wildcards_str}"
+            else:
+                slurm_dir = f"logs/slurm/{job.rule}"
+
+            candidates = slurm_logs.get(slurm_dir, [])
+            if candidates:
+                job.log = max(candidates, key=_slurm_id)
+
     async def cleanup(
         self,
         job_id: str,
@@ -528,15 +553,13 @@ class SlurmSSHBackend(ComputeBackend):
         # 1. Kill the wrapper process if a PID file exists
         pid_file = f"{shlex.quote(work_dir)}/.pid"
         await self._run_ssh(
-            f"test -f {pid_file} && "
-            f"kill $(cat {pid_file}) 2>/dev/null || true",
+            f"test -f {pid_file} && kill $(cat {pid_file}) 2>/dev/null || true",
             check=False,
         )
         # Wait before sending SIGKILL in case SIGTERM wasn't enough
         await asyncio.sleep(5)
         await self._run_ssh(
-            f"test -f {pid_file} && "
-            f"kill -9 $(cat {pid_file}) 2>/dev/null || true",
+            f"test -f {pid_file} && kill -9 $(cat {pid_file}) 2>/dev/null || true",
             check=False,
         )
         # 2. Cancel only SLURM jobs launched from this work_dir

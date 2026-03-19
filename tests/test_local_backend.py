@@ -41,26 +41,19 @@ class TestPrepareLocal:
         assert git_ref is None
         assert git_sha is None
 
-    async def test_git_clone_url(self, backend, tmp_path):
-        """prepare() with https:// URL calls git clone, extracts git_sha/ref."""
-        mock_clone = AsyncMock()
-        mock_clone.returncode = 0
-        mock_clone.communicate = AsyncMock(return_value=(b"", b""))
+    async def test_git_url_inits_bare_repo_and_creates_worktree(
+        self, backend, tmp_path
+    ):
+        """prepare() with https:// URL uses bare repo + worktree flow."""
+        call_log: list[tuple[str, ...]] = []
 
-        mock_revparse = AsyncMock()
-        mock_revparse.returncode = 0
-        mock_revparse.communicate = AsyncMock(
-            return_value=(b"abc123def456\nmain\n", b"")
-        )
+        async def fake_run_git_cmd(*args):
+            call_log.append(args)
+            if "rev-parse" in args:
+                return "abc123def456\n"
+            return ""
 
-        call_count = 0
-
-        async def fake_exec(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            return mock_clone if call_count == 1 else mock_revparse
-
-        with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+        with patch.object(backend, "_run_git_cmd", side_effect=fake_run_git_cmd):
             work_dir, git_ref, git_sha = await backend.prepare(
                 "job-git", "https://github.com/org/repo.git", git_ref="main"
             )
@@ -68,15 +61,103 @@ class TestPrepareLocal:
         assert git_sha == "abc123def456"
         assert git_ref == "main"
 
-    async def test_git_clone_failure_raises(self, backend, tmp_path):
-        """Non-zero git clone exit code raises RuntimeError."""
-        mock_proc = AsyncMock()
-        mock_proc.returncode = 128
-        mock_proc.communicate = AsyncMock(return_value=(b"", b"fatal: repo not found"))
+        cmds = [" ".join(c) for c in call_log]
+        assert any("git init --bare" in c for c in cmds)
+        assert any("git -C" in c and "fetch" in c for c in cmds)
+        assert any("worktree add --detach" in c for c in cmds)
+        assert any("rev-parse HEAD" in c for c in cmds)
+        assert any("update-ref -d" in c for c in cmds)
+        # No ls-remote since git_ref was provided
+        assert not any("ls-remote" in c for c in cmds)
 
-        with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
-            with pytest.raises(RuntimeError, match="git clone failed"):
-                await backend.prepare("job-fail", "https://github.com/org/missing.git")
+    async def test_git_fetch_failure_raises(self, backend, tmp_path):
+        """Non-zero git fetch exit code raises RuntimeError."""
+        call_count = 0
+
+        async def fake_run_git_cmd(*args):
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                return ""  # init succeeds
+            raise RuntimeError("git command failed (exit 128): git fetch")
+
+        with patch.object(backend, "_run_git_cmd", side_effect=fake_run_git_cmd):
+            with pytest.raises(RuntimeError, match="git.*failed"):
+                await backend.prepare(
+                    "job-fail",
+                    "https://github.com/org/missing.git",
+                    git_ref="nonexistent",
+                )
+
+    async def test_prepare_default_branch_resolution(self, backend, tmp_path):
+        """git_ref=None resolves default branch via ls-remote."""
+        call_log: list[tuple[str, ...]] = []
+
+        async def fake_run_git_cmd(*args):
+            call_log.append(args)
+            if "ls-remote" in args:
+                return "ref: refs/heads/develop\tHEAD\nabc123\tHEAD\n"
+            if "rev-parse" in args:
+                return "sha256abc\n"
+            return ""
+
+        with patch.object(backend, "_run_git_cmd", side_effect=fake_run_git_cmd):
+            work_dir, git_ref, git_sha = await backend.prepare(
+                "job-default", "https://github.com/org/repo.git"
+            )
+
+        assert git_ref == "develop"
+        assert git_sha == "sha256abc"
+        cmds = [" ".join(c) for c in call_log]
+        assert any("ls-remote" in c for c in cmds)
+
+    async def test_prepare_with_pr_ref(self, backend, tmp_path):
+        """refs/pull/123/head as git_ref is passed through to fetch."""
+        call_log: list[tuple[str, ...]] = []
+
+        async def fake_run_git_cmd(*args):
+            call_log.append(args)
+            if "rev-parse" in args:
+                return "pr-sha-123\n"
+            return ""
+
+        with patch.object(backend, "_run_git_cmd", side_effect=fake_run_git_cmd):
+            work_dir, git_ref, git_sha = await backend.prepare(
+                "job-pr",
+                "https://github.com/org/repo.git",
+                git_ref="refs/pull/123/head",
+            )
+
+        assert git_ref == "refs/pull/123/head"
+        assert git_sha == "pr-sha-123"
+        cmds = [" ".join(c) for c in call_log]
+        fetch_cmd = next(c for c in cmds if "fetch" in c)
+        assert "refs/pull/123/head" in fetch_cmd
+
+    async def test_two_jobs_same_repo_share_bare_repo(self, backend, tmp_path):
+        """Two jobs from the same repo share one bare repo, get separate worktrees."""
+        init_calls: list[tuple[str, ...]] = []
+
+        async def fake_run_git_cmd(*args):
+            if "init" in args:
+                init_calls.append(args)
+            if "rev-parse" in args:
+                return "sha1\n"
+            return ""
+
+        with patch.object(backend, "_run_git_cmd", side_effect=fake_run_git_cmd):
+            w1, _, _ = await backend.prepare(
+                "job-1", "https://github.com/org/repo.git", git_ref="main"
+            )
+            w2, _, _ = await backend.prepare(
+                "job-2", "https://github.com/org/repo.git", git_ref="main"
+            )
+
+        assert w1 != w2
+        # Both calls init the same bare repo path
+        init_paths = [c[-1] for c in init_calls]
+        assert len(init_paths) == 2
+        assert init_paths[0] == init_paths[1]
 
 
 class TestSetup:

@@ -177,6 +177,7 @@ class SnkmtJobResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     files: list[SnkmtFileResponse] = []
+    log: str | None = None
 
     @field_validator("started_at", "completed_at", mode="before")
     @classmethod

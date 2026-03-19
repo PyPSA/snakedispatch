@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.utils import enforce_error_limit
+from app.utils import bare_repo_dir, enforce_error_limit, parse_default_branch
 
 
 class TestEnforceErrorLimit:
@@ -51,3 +51,43 @@ class TestEnforceErrorLimit:
         with pytest.raises(RuntimeError) as exc_info:
             enforce_error_limit(10, "ctx", exc, threshold=10)
         assert exc_info.value.__cause__ is exc
+
+
+class TestBareRepoDir:
+    def test_https_url_with_git_suffix(self):
+        result = bare_repo_dir("/scratch", "https://github.com/PyPSA/pypsa-eur.git")
+        assert result == "/scratch/repos/github.com/PyPSA/pypsa-eur.git"
+
+    def test_https_url_without_git_suffix(self):
+        result = bare_repo_dir("/scratch", "https://github.com/PyPSA/pypsa-eur")
+        assert result == "/scratch/repos/github.com/PyPSA/pypsa-eur.git"
+
+    def test_both_url_forms_map_to_same_path(self):
+        a = bare_repo_dir("/scratch", "https://github.com/PyPSA/pypsa-eur.git")
+        b = bare_repo_dir("/scratch", "https://github.com/PyPSA/pypsa-eur")
+        assert a == b
+
+    def test_different_host(self):
+        result = bare_repo_dir("/scratch", "https://gitlab.example.com/org/repo.git")
+        assert result == "/scratch/repos/gitlab.example.com/org/repo.git"
+
+    def test_trailing_slash_stripped(self):
+        result = bare_repo_dir("/scratch", "https://github.com/PyPSA/pypsa-eur/")
+        assert result == "/scratch/repos/github.com/PyPSA/pypsa-eur.git"
+
+
+class TestParseDefaultBranch:
+    def test_parses_symref_output(self):
+        output = "ref: refs/heads/main\tHEAD\nabc123\tHEAD\n"
+        assert parse_default_branch(output) == "main"
+
+    def test_parses_non_main_branch(self):
+        output = "ref: refs/heads/develop\tHEAD\nabc123\tHEAD\n"
+        assert parse_default_branch(output) == "develop"
+
+    def test_falls_back_to_HEAD_without_symref(self):
+        output = "abc123\tHEAD\n"
+        assert parse_default_branch(output) == "HEAD"
+
+    def test_empty_output_falls_back(self):
+        assert parse_default_branch("") == "HEAD"

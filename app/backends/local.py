@@ -35,6 +35,31 @@ class LocalBackend(ComputeBackend):
     def work_dir(self, job_id: str) -> str:
         return f"{self._config.scratch_dir}/jobs/{job_id}"
 
+    def _scratch_dir(self) -> str:
+        return self._config.scratch_dir
+
+    async def _run_git_cmd(self, *args: str) -> str:
+        """Run a git subprocess locally, returning stdout."""
+        if "init" in args:
+            Path(args[-1]).parent.mkdir(parents=True, exist_ok=True)
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode != 0:
+            cmd_str = " ".join(args)
+            msg = (
+                f"git command failed (exit {proc.returncode}): {cmd_str}\n"
+                f"stderr: {(stderr or b'').decode()}"
+            )
+            raise RuntimeError(msg)
+        return (stdout or b"").decode()
+
+    async def _copy_local_workflow(self, src: str, dst: str) -> None:
+        await asyncio.to_thread(shutil.copytree, src, dst, dirs_exist_ok=True)
+
     async def prepare(
         self,
         job_id: str,
@@ -42,44 +67,7 @@ class LocalBackend(ComputeBackend):
         git_ref: str | None = None,
     ) -> tuple[str, str | None, str | None]:
         Path(self._config.scratch_dir).mkdir(parents=True, exist_ok=True)
-        work_dir = self.work_dir(job_id)
-        git_sha: str | None = None
-
-        if workflow.startswith(("http://", "https://")):
-            cmd = ["git", "clone", "--depth=1"]
-            if git_ref:
-                cmd += ["--branch", git_ref]
-            cmd += [workflow, work_dir]
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await proc.communicate()
-            if proc.returncode != 0:
-                msg = f"git clone failed (exit {proc.returncode}): {stderr.decode()}"
-                raise RuntimeError(msg)
-
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "-C",
-                work_dir,
-                "rev-parse",
-                "HEAD",
-                "--abbrev-ref",
-                "HEAD",
-                stdout=asyncio.subprocess.PIPE,
-            )
-            out, _ = await proc.communicate()
-            lines = out.decode().strip().splitlines()
-            git_sha = lines[0] if lines else None
-            git_ref = lines[1] if len(lines) > 1 else None
-        else:
-            src = Path(workflow)
-            dst = Path(work_dir)
-            await asyncio.to_thread(shutil.copytree, src, dst, dirs_exist_ok=True)
-
-        return work_dir, git_ref, git_sha
+        return await super().prepare(job_id, workflow, git_ref)
 
     async def setup(
         self,
@@ -93,7 +81,6 @@ class LocalBackend(ComputeBackend):
                 full_path.parent.mkdir(parents=True, exist_ok=True)
                 await asyncio.to_thread(full_path.write_text, content)
                 logger.debug("Wrote setup file: %s", full_path)
-
 
     async def launch(
         self,
@@ -202,11 +189,12 @@ class LocalBackend(ComputeBackend):
             try:
                 pid = int(pid_path.read_text(encoding="utf-8").strip())
                 os.kill(pid, 0)
-                return None  # still running
             except (ProcessLookupError, PermissionError):
                 return -1  # dead without exitcode
             except (ValueError, OSError):
                 return None
+            else:
+                return None  # still running
         return None
 
     async def list_workflow_files(

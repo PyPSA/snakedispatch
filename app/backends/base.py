@@ -6,10 +6,12 @@ from abc import ABC, abstractmethod
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from app.utils import bare_repo_dir, parse_default_branch
+
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Awaitable, Callable
 
-    from app.models import WorkflowFileInfo
+    from app.models import SnkmtJobResponse, WorkflowFileInfo
 
 logger = logging.getLogger(__name__)
 
@@ -60,19 +62,103 @@ class ComputeBackend(ABC):
         ...
 
     @abstractmethod
+    async def _run_git_cmd(self, *args: str) -> str:
+        """Run a git command and return its stdout as a string.
+
+        Implementations must raise on non-zero exit codes.
+        """
+        ...
+
+    @abstractmethod
+    async def _copy_local_workflow(self, src: str, dst: str) -> None:
+        """Copy a local workflow directory to the work directory."""
+        ...
+
+    @abstractmethod
+    def _scratch_dir(self) -> str:
+        """Return the scratch directory path for this backend."""
+        ...
+
     async def prepare(
         self,
         job_id: str,
         workflow: str,
         git_ref: str | None = None,
     ) -> tuple[str, str | None, str | None]:
-        """
-        Prepare workflow in a new working directory.
+        """Prepare workflow in a new working directory.
 
-        If workflow is a URL, clone the repo (checking out git_ref if provided).
-        If it is a local path, upload the directory to the compute host.
+        If workflow is a URL, set up a bare repo and create a worktree.
+        If it is a local path, copy/upload the directory.
         """
-        ...
+        work_dir = self.work_dir(job_id)
+        git_sha: str | None = None
+
+        if workflow.startswith(("http://", "https://")):
+            repo_dir = bare_repo_dir(self._scratch_dir(), workflow)
+            resolved_ref = git_ref
+
+            # 1. Ensure bare repo exists (idempotent)
+            await self._run_git_cmd("git", "init", "--bare", repo_dir)
+
+            # 2. Resolve default branch if git_ref not provided
+            if resolved_ref is None:
+                out = await self._run_git_cmd(
+                    "git",
+                    "ls-remote",
+                    "--symref",
+                    workflow,
+                    "HEAD",
+                )
+                resolved_ref = parse_default_branch(out)
+
+            # 3. Fetch to a job-scoped ref
+            job_ref = f"refs/snakedispatch/{job_id}"
+            await self._run_git_cmd(
+                "git",
+                "-C",
+                repo_dir,
+                "fetch",
+                workflow,
+                f"{resolved_ref}:{job_ref}",
+            )
+
+            # 4. Create worktree (detached HEAD)
+            await self._run_git_cmd(
+                "git",
+                "-C",
+                repo_dir,
+                "worktree",
+                "add",
+                "--detach",
+                work_dir,
+                job_ref,
+            )
+
+            # 5. Extract SHA
+            out = await self._run_git_cmd(
+                "git",
+                "-C",
+                work_dir,
+                "rev-parse",
+                "HEAD",
+            )
+            git_sha = out.strip()
+
+            # 6. Clean up temp ref
+            await self._run_git_cmd(
+                "git",
+                "-C",
+                repo_dir,
+                "update-ref",
+                "-d",
+                job_ref,
+            )
+
+            git_ref = resolved_ref
+        else:
+            await self._copy_local_workflow(workflow, work_dir)
+
+        return work_dir, git_ref, git_sha
 
     @abstractmethod
     async def setup(
@@ -183,6 +269,14 @@ class ComputeBackend(ABC):
     async def check_connectivity(self) -> bool:
         """Check whether the backend is reachable. Returns True if healthy."""
         ...
+
+    def resolve_job_logs(
+        self,
+        jobs: list[SnkmtJobResponse],
+        workflow_files: list[WorkflowFileInfo] | None,
+    ) -> None:
+        """Set job.log for each job based on backend-specific log paths."""
+        return
 
     @abstractmethod
     async def cleanup(
