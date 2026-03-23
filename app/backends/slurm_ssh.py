@@ -420,7 +420,10 @@ class SlurmSSHBackend(ComputeBackend):
                 continue
             rel_path, size_str = line.split("\t", 1)
             try:
-                files.append(WorkflowFileInfo(path=rel_path, size=int(size_str)))
+                size = int(size_str)
+                if size == 0:
+                    continue
+                files.append(WorkflowFileInfo(path=rel_path, size=size))
             except ValueError:
                 logger.warning("Skipping malformed file listing line: %r", line)
         return files

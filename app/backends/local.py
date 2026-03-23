@@ -210,8 +210,10 @@ class LocalBackend(ComputeBackend):
                 if p.is_file() and not any(
                     part.startswith(".") for part in p.relative_to(wd).parts
                 ):
-                    rel = str(p.relative_to(wd))
-                    files.append(WorkflowFileInfo(path=rel, size=p.stat().st_size))
+                    st = p.stat()
+                    if st.st_size > 0:
+                        rel = str(p.relative_to(wd))
+                        files.append(WorkflowFileInfo(path=rel, size=st.st_size))
             return files
 
         return await asyncio.to_thread(_scan)

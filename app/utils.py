@@ -20,7 +20,7 @@ def bare_repo_dir(scratch_dir: str, url: str) -> str:
 
 
 def parse_default_branch(ls_remote_output: str) -> str:
-    """Extract branch name from ``git ls-remote --symref`` output. Falls back to ``"HEAD"``."""
+    """Extract branch from ``git ls-remote --symref``. Falls back to ``"HEAD"``."""
     for line in ls_remote_output.splitlines():
         if line.startswith("ref: "):
             ref_part = line.split("\t", 1)[0]

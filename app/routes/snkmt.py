@@ -91,6 +91,20 @@ def _strip_work_dir(path: str, work_dir: str | None) -> str:
     return path
 
 
+def _filter_empty_log_files(
+    jobs: list[SnkmtJobResponse],
+    workflow_files: list[WorkflowFileInfo] | None,
+) -> None:
+    """Remove LOG files not in the (size-filtered) file listing."""
+    if not workflow_files:
+        return
+    valid_paths = {wf["path"] for wf in workflow_files}
+    for job in jobs:
+        job.files = [
+            f for f in job.files if f.file_type != "LOG" or f.path in valid_paths
+        ]
+
+
 def _build_snkmt_job_response(
     j: snkmt.JobRow,
     files_by_job: dict[int, list[snkmt.FileRow]],
@@ -190,6 +204,7 @@ async def get_workflow(
     response = _build_snkmt_workflow_response(data, work_dir)
     all_jobs = [job for rule in response.rules for job in rule.jobs]
     backend.resolve_job_logs(all_jobs, workflow_files)
+    _filter_empty_log_files(all_jobs, workflow_files)
     return response
 
 
@@ -207,6 +222,7 @@ async def get_workflow_jobs(
         _build_snkmt_job_response(j, result.files_by_job, work_dir) for j in result.jobs
     ]
     backend.resolve_job_logs(jobs, workflow_files)
+    _filter_empty_log_files(jobs, workflow_files)
     return jobs
 
 
@@ -236,6 +252,7 @@ async def get_workflow_rule(
         _build_snkmt_job_response(j, result.files_by_job, work_dir) for j in result.jobs
     ]
     backend.resolve_job_logs(rule_jobs, workflow_files)
+    _filter_empty_log_files(rule_jobs, workflow_files)
 
     return _build_snkmt_rule_response(result.rule, rule_jobs)
 
