@@ -142,24 +142,8 @@ class JobStore:
                 kwargs = {k: data[k] for k in _PERSIST_FIELDS}
                 record = JobRecord(**kwargs)
                 self._jobs[record.job_id] = record
-            except json.JSONDecodeError as exc:
-                logger.warning(
-                    "Skipping corrupt job file (malformed JSON): %s: %s", json_path, exc
-                )
-            except KeyError as exc:
-                logger.warning(
-                    "Skipping corrupt job file (missing field %s): %s", exc, json_path
-                )
-            except ValueError as exc:
-                logger.warning(
-                    "Skipping corrupt job file (invalid field value): %s: %s",
-                    json_path,
-                    exc,
-                )
-            except TypeError as exc:
-                logger.warning(
-                    "Skipping corrupt job file (type error): %s: %s", json_path, exc
-                )
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                logger.warning("Skipping corrupt job file: %s: %s", json_path, exc)
 
     def mark_setup(
         self, job_id: str, work_dir: str, git_ref: str | None, git_sha: str | None

@@ -73,6 +73,19 @@ async def _try_sync_snkmt(
         logger.warning("snkmt sync failed for %s", job_id, exc_info=True)
 
 
+async def _flush_and_sync(
+    store: JobStore,
+    backend: ComputeBackend,
+    job_id: str,
+    record: JobRecord,
+) -> None:
+    """Flush buffered logs and sync snkmt counts for a running job."""
+    _flush_logs(store, job_id)
+    snkmt_db_path = store.get_snkmt_db_path(job_id)
+    if snkmt_db_path:
+        await _try_sync_snkmt(backend, job_id, record, snkmt_db_path)
+
+
 async def _finalize_job(
     store: JobStore,
     backend: ComputeBackend,
@@ -81,14 +94,13 @@ async def _finalize_job(
     skip_snkmt_sync: bool = False,
 ) -> None:
     """Final sync of all job data at terminal state, then clear in-memory logs."""
-    job_id = record.job_id
-    _flush_logs(store, job_id)
-    snkmt_db_path = store.get_snkmt_db_path(job_id)
-    if not skip_snkmt_sync and record.work_dir and snkmt_db_path:
-        await _try_sync_snkmt(backend, job_id, record, snkmt_db_path)
+    if not skip_snkmt_sync and record.work_dir:
+        await _flush_and_sync(store, backend, record.job_id, record)
+    else:
+        _flush_logs(store, record.job_id)
     # Persist job metadata + clear in-memory state
     store.persist(record)
-    store.clear_job_logs(job_id)
+    store.clear_job_logs(record.job_id)
 
 
 async def _try_cache_workflow_files(
@@ -128,6 +140,42 @@ async def try_cleanup_job(backend: ComputeBackend, job_id: str, work_dir: str) -
         logger.warning("Background cleanup failed for job %s", job_id, exc_info=True)
 
 
+async def _restore_cache(
+    backend: ComputeBackend,
+    store: JobStore,
+    job_id: str,
+    work_dir: str,
+    params: ExecuteJobParams,
+) -> None:
+    """Restore cache if configured, logging success."""
+    if not (params.cache_key and params.cache_dirs):
+        return
+    restored = await backend.restore_cache(
+        job_id, work_dir, params.cache_key, params.cache_dirs
+    )
+    if restored:
+        store.push_log(job_id, f"Cache restored (key={params.cache_key})")
+
+
+async def _collect_results(
+    backend: ComputeBackend,
+    store: JobStore,
+    job_id: str,
+    work_dir: str,
+    exit_code: int,
+    params: ExecuteJobParams,
+) -> None:
+    """Cache file listing, mark finished and save build cache on success."""
+    workflow_files = await _try_cache_workflow_files(backend, job_id, work_dir)
+    if workflow_files is not None:
+        store.cache_workflow_files(job_id, workflow_files)
+    store.mark_finished(job_id, exit_code)
+    if exit_code == 0 and params.cache_key and params.cache_dirs:
+        await _try_save_cache(
+            backend, job_id, work_dir, params.cache_key, params.cache_dirs
+        )
+
+
 async def execute_job(
     store: JobStore,
     backend: ComputeBackend,
@@ -147,13 +195,7 @@ async def execute_job(
         )
         store.mark_setup(job_id, work_dir, git_ref, git_sha)
         await backend.setup(job_id, work_dir, params.extra_files)
-
-        if params.cache_key and params.cache_dirs:
-            restored = await backend.restore_cache(
-                job_id, work_dir, params.cache_key, params.cache_dirs
-            )
-            if restored:
-                store.push_log(job_id, f"Cache restored (key={params.cache_key})")
+        await _restore_cache(backend, store, job_id, work_dir, params)
 
         store.mark_running(job_id)
         await backend.launch(job_id, work_dir, params.configfile, params.snakemake_args)
@@ -162,18 +204,7 @@ async def execute_job(
             store.push_log(job_id, line)
 
         exit_code = await backend.monitor(job_id, work_dir, log_callback, byte_offset=0)
-
-        # Eagerly cache file listing so the outputs endpoint is instant
-        workflow_files = await _try_cache_workflow_files(backend, job_id, work_dir)
-        if workflow_files is not None:
-            store.cache_workflow_files(job_id, workflow_files)
-        store.mark_finished(job_id, exit_code)
-
-        if exit_code == 0 and params.cache_key and params.cache_dirs:
-            await _try_save_cache(
-                backend, job_id, work_dir, params.cache_key, params.cache_dirs
-            )
-
+        await _collect_results(backend, store, job_id, work_dir, exit_code, params)
         logger.info(
             "Job %s finished with status %s (exit %d)", job_id, record.status, exit_code
         )
@@ -194,7 +225,7 @@ async def execute_job(
             store,
             backend,
             record,
-            skip_snkmt_sync=record.status == JobStatus.CANCELLED,
+            skip_snkmt_sync=record.status in {JobStatus.CANCELLED, JobStatus.ERROR},
         )
 
 
@@ -245,10 +276,7 @@ async def sync_job_data_loop(
                     exc_info=True,
                 )
 
-            _flush_logs(store, job_id)
-            snkmt_db_path = store.get_snkmt_db_path(job_id)
-            if snkmt_db_path:
-                await _try_sync_snkmt(backend, job_id, record, snkmt_db_path)
+            await _flush_and_sync(store, backend, job_id, record)
 
 
 async def gc_loop(store: JobStore, backend: ComputeBackend, max_age_hours: int) -> None:

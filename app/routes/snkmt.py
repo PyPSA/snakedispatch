@@ -11,7 +11,7 @@ import logging
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path as FilePath
-from typing import Annotated, Any, TypeVar
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path
 
@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-_T = TypeVar("_T")
 
 # Job statuses where snkmt data is not yet available (before workflow execution starts).
 _PRE_EXECUTION_STATUSES = frozenset({JobStatus.PENDING, JobStatus.SETUP})
@@ -69,7 +68,7 @@ def _require_snkmt(
     return snkmt_db, record.work_dir, record.workflow_files
 
 
-async def _run_snkmt_query[T](job_id: str, query: Callable[[], _T]) -> _T:
+async def _run_snkmt_query[T](job_id: str, query: Callable[[], T]) -> T:
     """Run query in a thread and map sqlite3.DatabaseError to HTTP 502."""
     try:
         return await asyncio.to_thread(query)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -397,6 +397,43 @@ class TestSyncJobData:
 
         # Loop should have continued, snkmt sync still attempted
         mock_backend.sync_snkmt_db.assert_called()
+
+    async def test_recovers_stuck_job(self, mock_backend, tmp_path):
+        store = JobStore(data_dir=tmp_path)
+        store.create_job("stuck-job")
+        store.mark_setup("stuck-job", "/some/work/dir", None, None)
+        store.mark_running("stuck-job")
+
+        record = store.get_job("stuck-job")
+        mock_task = MagicMock()
+        mock_task.done.return_value = False
+        record.task = mock_task
+
+        # Backend reports job finished with exit code 1
+        mock_backend.check_job_status = AsyncMock(return_value=1)
+
+        await _run_one_iteration(sync_job_data_loop, store, mock_backend, 0)
+
+        assert record.status == JobStatus.FAILED
+        assert record.exit_code == 1
+        mock_task.cancel.assert_called_once()
+
+    async def test_check_job_status_failure_is_swallowed(self, mock_backend, tmp_path):
+        store = JobStore(data_dir=tmp_path)
+        store.create_job("check-err")
+        store.mark_setup("check-err", "/some/work/dir", None, None)
+        store.mark_running("check-err")
+
+        mock_backend.check_job_status = AsyncMock(
+            side_effect=RuntimeError("ssh failed")
+        )
+
+        # Should not crash — error is swallowed
+        await _run_one_iteration(sync_job_data_loop, store, mock_backend, 0)
+
+        # Job should still be running (not recovered)
+        record = store.get_job("check-err")
+        assert record.status == JobStatus.RUNNING
 
     async def test_five_consecutive_errors_stops_loop(self, mock_backend, tmp_path):
         store = JobStore(data_dir=tmp_path)

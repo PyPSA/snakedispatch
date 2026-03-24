@@ -5,9 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.backends.slurm_ssh import (
+    MONITOR_DEAD_SENTINEL,
     MONITOR_LOG_MARKER,
+    MONITOR_RUNNING_SENTINEL,
     SlurmSSHBackend,
     _build_rsync_filter,
+    _build_status_check_cmd,
+    _parse_job_status,
 )
 from app.config import SlurmSSHConfig
 from app.models import SnkmtJobResponse
@@ -62,6 +66,50 @@ class TestBuildRsyncFilters:
     def test_strips_leading_slash(self):
         result = _build_rsync_filter(["/data"])
         assert "--include=data/" in result
+
+
+class TestBuildStatusCheckCmd:
+    def test_contains_exitcode_check(self):
+        cmd = _build_status_check_cmd("'/work/dir'")
+        assert ".exitcode" in cmd
+        assert "'/work/dir'" in cmd
+
+    def test_contains_pid_probe(self):
+        cmd = _build_status_check_cmd("'/work/dir'")
+        assert ".pid" in cmd
+        assert "kill -0" in cmd
+
+    def test_contains_sentinels(self):
+        cmd = _build_status_check_cmd("/w")
+        assert MONITOR_RUNNING_SENTINEL in cmd
+        assert MONITOR_DEAD_SENTINEL in cmd
+
+
+class TestParseJobStatus:
+    def test_running_sentinel_returns_none(self):
+        assert _parse_job_status(MONITOR_RUNNING_SENTINEL) is None
+
+    def test_dead_sentinel_returns_minus_one(self):
+        assert _parse_job_status(MONITOR_DEAD_SENTINEL) == -1
+
+    def test_zero_exit_code(self):
+        assert _parse_job_status("0") == 0
+
+    def test_nonzero_exit_code(self):
+        assert _parse_job_status("1") == 1
+        assert _parse_job_status("137") == 137
+
+    def test_empty_string_returns_none(self):
+        assert _parse_job_status("") is None
+
+    def test_whitespace_returns_none(self):
+        assert _parse_job_status("  ") is None
+
+    def test_garbage_returns_none(self):
+        assert _parse_job_status("not-a-number") is None
+
+    def test_negative_exit_code(self):
+        assert _parse_job_status("-1") == -1
 
 
 # ---- SlurmSSHBackend unit tests with mocked SSH ----

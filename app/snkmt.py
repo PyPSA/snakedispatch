@@ -85,11 +85,14 @@ class ErrorRow(TypedDict):
     rule_name: str | None
 
 
-def _rename_end_time_column(row: dict[str, Any]) -> dict[str, Any]:
-    """Rename DB column end_time → completed_at to match our naming."""
-    row = dict(row)
-    row["completed_at"] = row.pop("end_time", None)
-    return row
+def _rename_end_time_column(row: sqlite3.Row) -> dict[str, Any]:
+    """Rename DB column ``end_time`` → ``completed_at`` to match our TypedDicts.
+
+    Callers cast the result to the appropriate TypedDict (WorkflowRow or JobRow).
+    """
+    out = dict(row)
+    out["completed_at"] = out.pop("end_time", None)
+    return out
 
 
 def safe_json_loads(value: str | None) -> dict[str, Any] | None:
@@ -135,7 +138,7 @@ def get_workflow(conn: sqlite3.Connection, workflow_id: str) -> WorkflowRow | No
     ).fetchone()
     if row is None:
         return None
-    return cast("WorkflowRow", _rename_end_time_column(dict(row)))
+    return cast("WorkflowRow", _rename_end_time_column(row))
 
 
 def get_rules(conn: sqlite3.Connection, workflow_id: str) -> list[RuleRow]:
@@ -154,7 +157,7 @@ def get_jobs(conn: sqlite3.Connection, workflow_id: str) -> list[JobRow]:
         "WHERE j.workflow_id = ?",
         (workflow_id,),
     ).fetchall()
-    return [cast("JobRow", _rename_end_time_column(dict(r))) for r in rows]
+    return [cast("JobRow", _rename_end_time_column(r)) for r in rows]
 
 
 def get_job_files_by_snakemake_id(
@@ -254,7 +257,7 @@ def get_jobs_by_rule(
         "WHERE j.workflow_id = ? AND r.name = ?",  # noqa: S608 — parameterized query
         (workflow_id, rule_name),
     ).fetchall()
-    return [cast("JobRow", _rename_end_time_column(dict(r))) for r in rows]
+    return [cast("JobRow", _rename_end_time_column(r)) for r in rows]
 
 
 def get_rule_by_name(

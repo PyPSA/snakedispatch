@@ -270,13 +270,12 @@ class ComputeBackend(ABC):
         """Check whether the backend is reachable. Returns True if healthy."""
         ...
 
-    def resolve_job_logs(
+    def resolve_job_logs(  # noqa: B027
         self,
         jobs: list[SnkmtJobResponse],
         workflow_files: list[WorkflowFileInfo] | None,
     ) -> None:
         """Set job.log for each job based on backend-specific log paths."""
-        return
 
     @abstractmethod
     async def cleanup(

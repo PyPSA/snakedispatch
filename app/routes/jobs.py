@@ -76,12 +76,22 @@ def _build_outputs_response(
     return JobOutputsResponse(files=files)
 
 
-_RESPONSE_FIELDS = tuple(JobResponse.model_fields.keys())
-
-
 def _build_job_response(record: JobRecord) -> JobResponse:
-    """Build a JobResponse from a JobRecord using _RESPONSE_FIELDS."""
-    return JobResponse(**{f: getattr(record, f) for f in _RESPONSE_FIELDS})
+    """Build a JobResponse from a JobRecord with explicit field mapping."""
+    return JobResponse(
+        job_id=record.job_id,
+        status=record.status,
+        workflow=record.workflow,
+        configfile=record.configfile,
+        git_ref=record.git_ref,
+        git_sha=record.git_sha,
+        exit_code=record.exit_code,
+        created_at=record.created_at,
+        started_at=record.started_at,
+        completed_at=record.completed_at,
+        total_job_count=record.total_job_count,
+        jobs_finished=record.jobs_finished,
+    )
 
 
 @router.post("/jobs", response_model=JobResponse, status_code=201)

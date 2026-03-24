@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -539,3 +540,32 @@ class TestLocalBackendIntegration:
         assert record.completed_at is not None
         # Snakefile should have been copied to work dir
         assert (Path(record.work_dir) / "Snakefile").exists()
+
+
+class TestCheckJobStatus:
+    async def test_returns_exit_code_when_exitcode_file_exists(self, backend, tmp_path):
+        work_dir = tmp_path / "job"
+        work_dir.mkdir()
+        (work_dir / ".exitcode").write_text("0")
+        result = await backend.check_job_status("j1", str(work_dir))
+        assert result == 0
+
+    async def test_returns_none_when_pid_alive(self, backend, tmp_path):
+        work_dir = tmp_path / "job"
+        work_dir.mkdir()
+        (work_dir / ".pid").write_text(str(os.getpid()))
+        result = await backend.check_job_status("j2", str(work_dir))
+        assert result is None  # our own PID is alive
+
+    async def test_returns_negative_one_when_pid_dead(self, backend, tmp_path):
+        work_dir = tmp_path / "job"
+        work_dir.mkdir()
+        (work_dir / ".pid").write_text("999999999")  # non-existent PID
+        result = await backend.check_job_status("j3", str(work_dir))
+        assert result == -1
+
+    async def test_returns_none_when_nothing_exists(self, backend, tmp_path):
+        work_dir = tmp_path / "job"
+        work_dir.mkdir()
+        result = await backend.check_job_status("j4", str(work_dir))
+        assert result is None

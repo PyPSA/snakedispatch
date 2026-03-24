@@ -48,6 +48,29 @@ MONITOR_LOG_MARKER = "---SNAKEDISPATCH-LOG-BOUNDARY-7f4e2d1a---"
 MONITOR_DEAD_SENTINEL = "DEAD"
 
 
+def _build_status_check_cmd(work_dir_quoted: str) -> str:
+    """Build shell command to check job exit status via .exitcode / PID probe."""
+    return (
+        f"test -f {work_dir_quoted}/.exitcode && cat {work_dir_quoted}/.exitcode "
+        f"|| (kill -0 $(cat {work_dir_quoted}/.pid 2>/dev/null) 2>/dev/null "
+        f"&& echo {MONITOR_RUNNING_SENTINEL} "
+        f"|| echo {MONITOR_DEAD_SENTINEL})"
+    )
+
+
+def _parse_job_status(status: str) -> int | None:
+    """Parse status check output → exit code, -1 for dead, or None for running."""
+    if status == MONITOR_RUNNING_SENTINEL:
+        return None
+    if status == MONITOR_DEAD_SENTINEL:
+        return -1
+    try:
+        return int(status)
+    except ValueError:
+        logger.warning("Unparsable job status value: %r, treating as running", status)
+        return None
+
+
 def _build_rsync_filter(cache_dirs: list[str]) -> str:
     """Build rsync --include/--exclude args from cache_dirs patterns.
 
@@ -84,8 +107,8 @@ def _build_rsync_filter(cache_dirs: list[str]) -> str:
 class SlurmSSHBackend(ComputeBackend):
     """
     Compute backend that connects to an HPC head node via SSH,
-    clones a workflow, runs Snakemake via pixi in a detached process,
-    and monitors via polling.
+    fetches a workflow into a bare repo and creates a worktree,
+    runs Snakemake via pixi in a detached process, and monitors via polling.
     """
 
     def __init__(self, config: SlurmSSHConfig) -> None:
@@ -314,16 +337,11 @@ class SlurmSSHBackend(ComputeBackend):
 
         while True:
             try:
-                # Read new log bytes, print a marker, then print the exit
-                # code (or "RUNNING" if still alive)
                 wd = shlex.quote(work_dir)
                 cmd = (
                     f"tail -c +{offset + 1} {wd}/.stdout.log 2>/dev/null; "
                     f"echo '{MONITOR_LOG_MARKER}'; "
-                    f"test -f {wd}/.exitcode && cat {wd}/.exitcode "
-                    f"|| (kill -0 $(cat {wd}/.pid 2>/dev/null) 2>/dev/null "
-                    f"&& echo {MONITOR_RUNNING_SENTINEL} "
-                    f"|| echo {MONITOR_DEAD_SENTINEL})"
+                    f"{_build_status_check_cmd(wd)}"
                 )
                 result = await self._run_ssh(cmd, check=False)
                 stdout = result.stdout or ""
@@ -336,32 +354,20 @@ class SlurmSSHBackend(ComputeBackend):
                 consecutive_errors = 0
 
                 if new_log_data:
-                    # Advance offset so next poll only reads new bytes
                     offset += len(new_log_data.encode("utf-8", errors="replace"))
                     for line in new_log_data.splitlines():
                         log_callback(line)
 
-                # "RUNNING" = still going
-                # "DEAD" = process killed without writing .exitcode
-                # number = exit code
-                if status_part == MONITOR_DEAD_SENTINEL:
+                exit_code = _parse_job_status(status_part)
+                if exit_code == -1:
                     logger.warning(
                         "Job %s: wrapper process died without writing "
                         ".exitcode (likely OOM or SIGKILL)",
                         job_id,
                     )
                     return -1
-                if status_part != MONITOR_RUNNING_SENTINEL:
-                    try:
-                        return int(status_part)
-                    except ValueError:
-                        logger.warning(
-                            "Unexpected status value: %r, treating as running",
-                            status_part,
-                        )
-                        # Sleep for poll_interval before retrying
-                        await asyncio.sleep(self._config.poll_interval)
-                        continue
+                if exit_code is not None:
+                    return exit_code
 
             except (TimeoutError, OSError, asyncssh.Error) as exc:
                 consecutive_errors += 1
@@ -374,22 +380,8 @@ class SlurmSSHBackend(ComputeBackend):
     async def check_job_status(self, job_id: str, work_dir: str) -> int | None:
         """Check if a job process has finished without blocking."""
         wd = shlex.quote(work_dir)
-        cmd = (
-            f"test -f {wd}/.exitcode && cat {wd}/.exitcode "
-            f"|| (kill -0 $(cat {wd}/.pid 2>/dev/null) 2>/dev/null "
-            f"&& echo {MONITOR_RUNNING_SENTINEL} "
-            f"|| echo {MONITOR_DEAD_SENTINEL})"
-        )
-        result = await self._run_ssh(cmd, check=False)
-        status = (result.stdout or "").strip()
-        if status == MONITOR_RUNNING_SENTINEL:
-            return None
-        if status == MONITOR_DEAD_SENTINEL:
-            return -1
-        try:
-            return int(status)
-        except ValueError:
-            return None
+        result = await self._run_ssh(_build_status_check_cmd(wd), check=False)
+        return _parse_job_status((result.stdout or "").strip())
 
     async def check_connectivity(self) -> bool:
         """Check SSH connectivity and scratch filesystem health."""
