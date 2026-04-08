@@ -17,4 +17,5 @@ if grep -q "^local:" /app/config.yaml 2>/dev/null; then
     fi
 fi
 
-exec gosu appuser "$@"
+# Use tini as PID 1 to clean up zombie processes (e.g. docker health checks)
+exec tini -- gosu appuser "$@"
