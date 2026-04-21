@@ -5,6 +5,7 @@ services:
     ports:
     - "8010:8000"
     volumes:
+    - ./data/local:/data
     - ./config/config.local.yaml:/app/config.yaml:ro
       # Mount local workflow directories for path-based sources:
       # - /path/to/pypsa-eur:/mnt/workflows/pypsa-eur
@@ -15,6 +16,7 @@ services:
     ports:
     - "8011:8000"
     volumes:
+    - ./data/slurm:/data
     - ./config/config.slurm_ssh.yaml:/app/config.yaml:ro
     - ./ssh_key:/home/appuser/.ssh/id_rsa:ro
       # Mount local workflow directories for path-based sources:
