@@ -33,6 +33,7 @@ def build_wrapper_script(
     snkmt_db_path: str,
     configfile: str | None,
     snakemake_args: list[str] | None,
+    env_vars: dict[str, str] | None = None,
 ) -> str:
     """Build the .run.sh bash wrapper script for a Snakemake workflow run."""
     configfile_arg = f" --configfile {shlex.quote(configfile)}" if configfile else ""
@@ -41,9 +42,14 @@ def build_wrapper_script(
         extra_args = " " + " ".join(shlex.quote(a) for a in snakemake_args)
     pixi = shlex.quote(pixi_path)
     snkmt = shlex.quote(snkmt_db_path)
+    exports = (
+        "\n".join(f"export {k}={shlex.quote(v)}" for k, v in env_vars.items()) + "\n"
+        if env_vars
+        else ""
+    )
     return f"""\
 #!/bin/bash
-echo $$ > .pid
+{exports}echo $$ > .pid
 SNKMT_ARGS=""
 if {pixi} run python -c "import snakemake_logger_plugin_snkmt" 2>/dev/null; then
     SNKMT_ARGS="--logger snkmt --logger-snkmt-db {snkmt}"

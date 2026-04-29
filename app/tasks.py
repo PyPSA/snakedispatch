@@ -27,6 +27,7 @@ class ExecuteJobParams:
     extra_files: dict[str, str] | None = None
     cache_key: str | None = None
     cache_dirs: list[str] | None = None
+    env_vars: dict[str, str] | None = None
 
 
 logger = logging.getLogger(__name__)
@@ -198,7 +199,7 @@ async def execute_job(
         await _restore_cache(backend, store, job_id, work_dir, params)
 
         store.mark_running(job_id)
-        await backend.launch(job_id, work_dir, params.configfile, params.snakemake_args)
+        await backend.launch(job_id, work_dir, params.configfile, params.snakemake_args, params.env_vars)
 
         def log_callback(line: str) -> None:
             store.push_log(job_id, line)

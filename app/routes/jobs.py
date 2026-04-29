@@ -133,6 +133,7 @@ async def create_job(
                 extra_files=body.extra_files,
                 cache_key=body.cache_key,
                 cache_dirs=body.cache_dirs,
+                env_vars=body.env_vars,
             ),
         ),
         name=f"execute-{job_id}",

@@ -284,12 +284,13 @@ class SlurmSSHBackend(ComputeBackend):
         work_dir: str,
         configfile: str | None,
         snakemake_args: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
     ) -> None:
         cfg = self._config
         self._validate_configfile(configfile)
         snkmt_db_path = f"{work_dir}/{SNKMT_DB_FILENAME}"
         wrapper_content = build_wrapper_script(
-            cfg.pixi_path, snkmt_db_path, configfile, snakemake_args
+            cfg.pixi_path, snkmt_db_path, configfile, snakemake_args, env_vars
         )
 
         # Write wrapper script via SFTP, then make executable and launch detached

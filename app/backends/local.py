@@ -88,11 +88,12 @@ class LocalBackend(ComputeBackend):
         work_dir: str,
         configfile: str | None,
         snakemake_args: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
     ) -> None:
         self._validate_configfile(configfile)
         snkmt_db_path = str(Path(work_dir).resolve() / SNKMT_DB_FILENAME)
         wrapper_content = build_wrapper_script(
-            self._config.pixi_path, snkmt_db_path, configfile, snakemake_args
+            self._config.pixi_path, snkmt_db_path, configfile, snakemake_args, env_vars
         )
 
         wd = Path(work_dir)

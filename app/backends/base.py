@@ -177,6 +177,7 @@ class ComputeBackend(ABC):
         work_dir: str,
         configfile: str | None,
         snakemake_args: list[str] | None = None,
+        env_vars: dict[str, str] | None = None,
     ) -> None:
         """
         Write the .run.sh wrapper script, launch it via nohup/disown,
