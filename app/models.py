@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import enum
-import re
 from datetime import UTC, datetime
 from pathlib import PurePosixPath
 from typing import Any, Literal, TypedDict
 
 from pydantic import BaseModel, Field, field_validator
-
-_VALID_ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _ensure_utc(v: str | datetime | None) -> datetime | None:
@@ -81,7 +78,7 @@ class JobCreate(BaseModel):
     env_vars: dict[str, str] | None = Field(
         None,
         description="Environment variables to merge into the Snakemake process "
-        "environment. Keys must be valid identifier names ([A-Za-z_][A-Za-z0-9_]*).",
+        "environment. Only keys listed in the server's allowed_env_vars config are accepted.",
     )
 
     @field_validator("cache_key")
@@ -111,16 +108,6 @@ class JobCreate(BaseModel):
                 parts = PurePosixPath(entry).parts
                 if ".." in parts or any(p.startswith("/") for p in parts):
                     msg = f"cache_dirs entry is not a safe relative path: {entry!r}"
-                    raise ValueError(msg)
-        return v
-
-    @field_validator("env_vars")
-    @classmethod
-    def _validate_env_vars(cls, v: dict[str, str] | None) -> dict[str, str] | None:
-        if v is not None:
-            for key in v:
-                if not _VALID_ENV_VAR_NAME.match(key):
-                    msg = f"env_vars key is not a valid environment variable name: {key!r}"
                     raise ValueError(msg)
         return v
 

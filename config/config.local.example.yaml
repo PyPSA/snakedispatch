@@ -3,6 +3,7 @@ local:
   pixi_path: /home/appuser/.pixi/bin/pixi
   poll_interval: 5
   default_snakemake_args: []
+  allowed_env_vars: ["OETC_EMAIL", "OETC_PASSWORD"]
 
 # App-level settings (optional, shown with defaults)
 # HEALTH_CACHE_TTL_SECONDS: 300

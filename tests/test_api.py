@@ -828,3 +828,76 @@ class TestLifespan:
             )
         )
         assert isinstance(backend, SlurmSSHBackend)
+
+
+class TestEnvVars:
+    async def test_env_vars_rejected_when_feature_disabled(self, async_client):
+        response = await async_client.post(
+            "/jobs",
+            json={
+                "workflow": "https://github.com/org/repo.git",
+                "env_vars": {"OETC_EMAIL": "test@example.com"},
+            },
+        )
+        assert response.status_code == 422
+        assert "not enabled" in response.json()["detail"]
+
+    async def test_env_vars_accepted_when_in_whitelist(
+        self, store, mock_backend, settings
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from app.config import LocalConfig
+        from app.deps import AppState
+
+        backend_config = LocalConfig()
+        app.state.app = AppState(
+            store=store,
+            backend=mock_backend,
+            settings=settings,
+            health_cache={"backend_ok": None, "checked_at": 0.0},
+            default_snakemake_args=backend_config.default_snakemake_args,
+            allowed_env_vars=["OETC_EMAIL", "OETC_PASSWORD"],
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/jobs",
+                json={
+                    "workflow": "https://github.com/org/repo.git",
+                    "env_vars": {"OETC_EMAIL": "user@example.com"},
+                },
+            )
+        assert response.status_code == 201
+
+    async def test_env_vars_rejected_when_key_not_in_whitelist(
+        self, store, mock_backend, settings
+    ):
+        from httpx import ASGITransport, AsyncClient
+
+        from app.config import LocalConfig
+        from app.deps import AppState
+
+        backend_config = LocalConfig()
+        app.state.app = AppState(
+            store=store,
+            backend=mock_backend,
+            settings=settings,
+            health_cache={"backend_ok": None, "checked_at": 0.0},
+            default_snakemake_args=backend_config.default_snakemake_args,
+            allowed_env_vars=["OETC_EMAIL"],
+        )
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            response = await client.post(
+                "/jobs",
+                json={
+                    "workflow": "https://github.com/org/repo.git",
+                    "env_vars": {
+                        "OETC_EMAIL": "user@example.com",
+                        "MY_SECRET": "hunter2",
+                    },
+                },
+            )
+        assert response.status_code == 422
+        assert "MY_SECRET" in response.json()["detail"]

@@ -6,6 +6,7 @@ slurm_ssh:
   scratch_dir: /scratch/myuser/executor
   poll_interval: 5
   default_snakemake_args: ["--profile", "slurm"]
+  # allowed_env_vars: ["OETC_EMAIL", "OETC_PASSWORD"]
 
 # App-level settings (optional, shown with defaults)
 # HEALTH_CACHE_TTL_SECONDS: 300

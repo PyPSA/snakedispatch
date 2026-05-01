@@ -252,6 +252,7 @@ async def async_client(store, mock_backend, settings):
         settings=settings,
         health_cache={"backend_ok": None, "checked_at": 0.0},
         default_snakemake_args=backend_config.default_snakemake_args,
+        allowed_env_vars=backend_config.allowed_env_vars,
     )
 
     transport = ASGITransport(app=app)

@@ -56,6 +56,7 @@ class TestExecuteJob:
             "/scratch/test/jobs/test-job-id",
             "config.yaml",
             ["--profile", "slurm"],
+            None,
         )
         mock_backend.monitor.assert_called_once()
 
@@ -130,6 +131,7 @@ class TestExecuteJob:
         mock_backend.launch.assert_called_once_with(
             "test-minimal",
             "/scratch/test/jobs/test-job-id",
+            None,
             None,
             None,
         )
