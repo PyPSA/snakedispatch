@@ -40,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings=settings,
         health_cache={"backend_ok": None, "checked_at": 0.0},
         default_snakemake_args=backend_config.default_snakemake_args,
+        allowed_env_vars=backend_config.allowed_env_vars,
     )
 
     store.restore_from_disk()

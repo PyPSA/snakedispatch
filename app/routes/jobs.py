@@ -14,6 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from app.backends.base import ComputeBackend
 from app.deps import (
+    get_allowed_env_vars,
     get_backend,
     get_default_snakemake_args,
     get_store,
@@ -100,8 +101,22 @@ async def create_job(
     store: Annotated[JobStore, Depends(get_store)],
     backend: Annotated[ComputeBackend, Depends(get_backend)],
     default_snakemake_args: Annotated[list[str], Depends(get_default_snakemake_args)],
+    allowed_env_vars: Annotated[list[str] | None, Depends(get_allowed_env_vars)],
 ) -> JobResponse:
     """Submit a new Snakemake job for execution."""
+    if body.env_vars:
+        if allowed_env_vars is None:
+            raise HTTPException(
+                status_code=422,
+                detail="env_vars are not enabled; set allowed_env_vars in server config",
+            )
+        disallowed = set(body.env_vars) - set(allowed_env_vars)
+        if disallowed:
+            raise HTTPException(
+                status_code=422,
+                detail=f"env_vars keys not in allowed list: {sorted(disallowed)}",
+            )
+
     source = body.workflow
     is_url = source.startswith(("http://", "https://"))
     if not is_url:
@@ -133,6 +148,7 @@ async def create_job(
                 extra_files=body.extra_files,
                 cache_key=body.cache_key,
                 cache_dirs=body.cache_dirs,
+                env_vars=body.env_vars,
             ),
         ),
         name=f"execute-{job_id}",

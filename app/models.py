@@ -75,6 +75,11 @@ class JobCreate(BaseModel):
         description="Relative paths within the work directory to cache, "
         "e.g. ['data', 'resources']. Requires cache_key.",
     )
+    env_vars: dict[str, str] | None = Field(
+        None,
+        description="Environment variables to merge into the Snakemake process "
+        "environment. Only keys listed in the server's allowed_env_vars config are accepted.",
+    )
 
     @field_validator("cache_key")
     @classmethod

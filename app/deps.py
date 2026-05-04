@@ -27,6 +27,7 @@ class AppState:
     settings: Settings
     health_cache: HealthCache
     default_snakemake_args: list[str]
+    allowed_env_vars: list[str] | None = None
     background_tasks: set[asyncio.Task[None]] = field(default_factory=set)
 
 
@@ -44,6 +45,10 @@ def get_backend(request: Request) -> ComputeBackend:
 
 def get_default_snakemake_args(request: Request) -> list[str]:
     return app_state(request).default_snakemake_args
+
+
+def get_allowed_env_vars(request: Request) -> list[str] | None:
+    return app_state(request).allowed_env_vars
 
 
 def provide_background_tasks(request: Request) -> set[asyncio.Task[None]]:

@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from pydantic_settings import BaseSettings
 
 BACKEND_KEYS: frozenset[str] = frozenset({"slurm_ssh", "local"})
+
+_VALID_ENV_VAR_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _validate_env_var_names(v: list[str] | None) -> list[str] | None:
+    if v is not None:
+        for name in v:
+            if not _VALID_ENV_VAR_NAME.match(name):
+                msg = f"allowed_env_vars entry is not a valid env var name: {name!r}"
+                raise ValueError(msg)
+    return v
 
 
 class Settings(BaseSettings):
@@ -40,6 +52,12 @@ class SlurmSSHConfig(BaseModel):
     scratch_dir: str
     default_snakemake_args: list[str] = []
     snkmt_db_sync_interval: float = 30.0
+    allowed_env_vars: list[str] | None = None
+
+    @field_validator("allowed_env_vars")
+    @classmethod
+    def _validate_allowed_env_vars(cls, v: list[str] | None) -> list[str] | None:
+        return _validate_env_var_names(v)
 
 
 class LocalConfig(BaseModel):
@@ -50,6 +68,12 @@ class LocalConfig(BaseModel):
     poll_interval: float = 5.0
     default_snakemake_args: list[str] = []
     snkmt_db_sync_interval: float = 30.0
+    allowed_env_vars: list[str] | None = None
+
+    @field_validator("allowed_env_vars")
+    @classmethod
+    def _validate_allowed_env_vars(cls, v: list[str] | None) -> list[str] | None:
+        return _validate_env_var_names(v)
 
 
 def load_config(
