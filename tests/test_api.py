@@ -388,6 +388,43 @@ class TestSseStreaming:
         assert new_offset == MAX_IN_MEMORY_LINES + 100
 
 
+class TestRevealLogFile:
+    async def test_reveals_persisted_log(self, async_client, store, monkeypatch):
+        job_id = "test-reveal-log"
+        store.create_job(job_id)
+        store.mark_finished(job_id, 0)
+        log_path = store.get_log_path(job_id)
+        assert log_path is not None
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text("hello\n")
+
+        calls: list[list[str]] = []
+
+        def fake_popen(cmd: list[str], *args, **kwargs):
+            calls.append(cmd)
+
+            class _Proc:
+                pass
+
+            return _Proc()
+
+        monkeypatch.setattr("app.routes.jobs.subprocess.Popen", fake_popen)
+        monkeypatch.setattr("app.routes.jobs.sys.platform", "darwin")
+
+        response = await async_client.post(f"/jobs/{job_id}/logs/reveal")
+        assert response.status_code == 200
+        assert response.json()["message"] == f"Revealed {log_path.name} in Finder"
+        assert calls == [["open", "-R", str(log_path)]]
+
+    async def test_missing_log_returns_404(self, async_client, store):
+        job_id = "test-reveal-missing"
+        store.create_job(job_id)
+        store.mark_finished(job_id, 0)
+
+        response = await async_client.post(f"/jobs/{job_id}/logs/reveal")
+        assert response.status_code == 404
+
+
 class TestHealth:
     async def test_returns_status(self, async_client, mock_backend):
         mock_backend.check_connectivity = AsyncMock(return_value=True)

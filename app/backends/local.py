@@ -278,6 +278,13 @@ class LocalBackend(ComputeBackend):
         src = Path(work_dir).resolve() / SNKMT_DB_FILENAME
         if not src.exists():
             return
+        if src == local_path.resolve():
+            logger.debug(
+                "Skipping snkmt.db self-sync for job %s because source and destination are identical: %s",
+                job_id,
+                src,
+            )
+            return
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         def _backup() -> None:
