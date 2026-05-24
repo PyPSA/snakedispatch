@@ -1,0 +1,10 @@
+rule all:
+    input:
+        "results/hello.txt"
+
+
+rule write_hello:
+    output:
+        "results/hello.txt"
+    shell:
+        "mkdir -p results && echo 'hello from snakedispatch' > {output}"

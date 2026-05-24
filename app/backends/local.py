@@ -31,12 +31,13 @@ class LocalBackend(ComputeBackend):
 
     def __init__(self, config: LocalConfig) -> None:
         self._config = config
+        self._scratch_dir_path = Path(config.scratch_dir).resolve()
 
     def work_dir(self, job_id: str) -> str:
-        return f"{self._config.scratch_dir}/jobs/{job_id}"
+        return str(self._scratch_dir_path / "jobs" / job_id)
 
     def _scratch_dir(self) -> str:
-        return self._config.scratch_dir
+        return str(self._scratch_dir_path)
 
     async def _run_git_cmd(self, *args: str) -> str:
         """Run a git subprocess locally, returning stdout."""
@@ -66,7 +67,7 @@ class LocalBackend(ComputeBackend):
         workflow: str,
         git_ref: str | None = None,
     ) -> tuple[str, str | None, str | None]:
-        Path(self._config.scratch_dir).mkdir(parents=True, exist_ok=True)
+        self._scratch_dir_path.mkdir(parents=True, exist_ok=True)
         return await super().prepare(job_id, workflow, git_ref)
 
     async def setup(
