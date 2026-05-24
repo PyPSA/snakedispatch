@@ -50,11 +50,11 @@ def build_wrapper_script(
     return f"""\
 #!/bin/bash
 {exports}echo $$ > .pid
-SNKMT_ARGS=""
+SNKMT_ARGS=()
 if {pixi} run python -c "import snakemake_logger_plugin_snkmt" 2>/dev/null; then
-    SNKMT_ARGS="--logger snkmt --logger-snkmt-db {snkmt}"
+    SNKMT_ARGS=("--logger" "snkmt" "--logger-snkmt-db" {snkmt})
 fi
-{pixi} run snakemake $SNKMT_ARGS{configfile_arg}{extra_args} > .stdout.log 2>&1
+{pixi} run snakemake "${{SNKMT_ARGS[@]}}"{configfile_arg}{extra_args} > .stdout.log 2>&1
 echo $? > .exitcode
 """
 
