@@ -8,6 +8,7 @@ import shlex
 import shutil
 import signal
 import sqlite3
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,7 @@ from app.backends.base import CHUNK_SIZE, SNKMT_DB_FILENAME, ComputeBackend
 from app.config import LocalConfig
 from app.models import WorkflowFileInfo
 from app.utils import (
+    build_windows_wrapper_script,
     build_wrapper_script,
     enforce_error_limit,
     rename_with_cleanup,
@@ -98,22 +100,46 @@ class LocalBackend(ComputeBackend):
         )
 
         wd = Path(work_dir)
-        script_path = wd / ".run.sh"
-        await asyncio.to_thread(script_path.write_text, wrapper_content)
-        await asyncio.to_thread(script_path.chmod, 0o755)
-
-        proc = await asyncio.create_subprocess_shell(
-            "nohup bash "
-            f"{shlex.quote(script_path.name)}"
-            " < /dev/null > /dev/null 2>&1 &",
-            cwd=work_dir,
-        )
-        await proc.wait()
-
         pid_path = wd / ".pid"
 
         async def _pid_exists() -> bool:
             return await asyncio.to_thread(pid_path.exists)
+
+        if sys.platform == "win32":
+            wrapper_content = build_windows_wrapper_script(
+                self._config.pixi_path, snkmt_db_path, configfile, snakemake_args, env_vars
+            )
+            script_path = wd / ".run.ps1"
+            await asyncio.to_thread(script_path.write_text, wrapper_content, encoding="utf-8")
+
+            # cmd /c start /b detaches PowerShell immediately (equivalent to Unix &).
+            # PowerShell writes $PID to .pid so we can track and kill the process.
+            proc = await asyncio.create_subprocess_exec(
+                "cmd", "/c", "start", "/b", "powershell",
+                "-NonInteractive", "-NoProfile",
+                "-ExecutionPolicy", "Bypass",
+                "-File", str(script_path),
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+                cwd=work_dir,
+            )
+            await proc.wait()
+        else:
+            wrapper_content = build_wrapper_script(
+                self._config.pixi_path, snkmt_db_path, configfile, snakemake_args, env_vars
+            )
+            script_path = wd / ".run.sh"
+            await asyncio.to_thread(script_path.write_text, wrapper_content)
+            await asyncio.to_thread(script_path.chmod, 0o755)
+
+            proc = await asyncio.create_subprocess_shell(
+                "nohup bash "
+                f"{shlex.quote(script_path.name)}"
+                " < /dev/null > /dev/null 2>&1 &",
+                cwd=work_dir,
+            )
+            await proc.wait()
 
         await self._poll_until_pid_file(job_id, work_dir, _pid_exists)
 
@@ -319,8 +345,9 @@ class LocalBackend(ComputeBackend):
             try:
                 pid = int(pid_path.read_text().strip())
                 os.kill(pid, signal.SIGTERM)
-                await asyncio.sleep(5)
-                os.kill(pid, signal.SIGKILL)
+                if hasattr(signal, "SIGKILL"):  # not defined on Windows
+                    await asyncio.sleep(5)
+                    os.kill(pid, signal.SIGKILL)
             except ProcessLookupError as exc:
                 logger.debug("Process already gone for job %s: %s", job_id, exc)
             except (ValueError, OSError) as exc:

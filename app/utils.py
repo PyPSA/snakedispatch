@@ -59,10 +59,46 @@ echo $? > .exitcode
 """
 
 
+def _ps_quote(s: str) -> str:
+    """Single-quote a string for PowerShell (literal, no variable expansion)."""
+    return "'" + s.replace("'", "''") + "'"
+
+
+def build_windows_wrapper_script(
+    pixi_path: str,
+    snkmt_db_path: str,
+    configfile: str | None,
+    snakemake_args: list[str] | None,
+    env_vars: dict[str, str] | None = None,
+) -> str:
+    """Build the .run.ps1 PowerShell wrapper script for a Snakemake workflow run on Windows."""
+    configfile_arg = f" --configfile {_ps_quote(configfile)}" if configfile else ""
+    extra_args = ""
+    if snakemake_args:
+        extra_args = " " + " ".join(_ps_quote(a) for a in snakemake_args)
+    pixi = _ps_quote(pixi_path)
+    snkmt = _ps_quote(snkmt_db_path)
+    env_lines = (
+        "\n".join(f"$env:{k} = {_ps_quote(v)}" for k, v in env_vars.items()) + "\n"
+        if env_vars
+        else ""
+    )
+    return f"""\
+$PID | Out-File -FilePath '.pid' -NoNewline -Encoding ASCII
+{env_lines}$snkmtArgs = @()
+& {pixi} run python -c 'import snakemake_logger_plugin_snkmt' 2>$null
+if ($LASTEXITCODE -eq 0) {{
+    $snkmtArgs = @('--logger', 'snkmt', '--logger-snkmt-db', {snkmt})
+}}
+& {pixi} run snakemake @snkmtArgs{configfile_arg}{extra_args} > '.stdout.log' 2>&1
+$LASTEXITCODE | Out-File -FilePath '.exitcode' -NoNewline -Encoding ASCII
+"""
+
+
 def rename_with_cleanup(tmp: Path, dest: Path) -> None:
-    """Rename tmp to dest, cleaning up tmp on failure."""
+    """Atomically replace dest with tmp, cleaning up tmp on failure."""
     try:
-        tmp.rename(dest)
+        tmp.replace(dest)
     except OSError:
         with contextlib.suppress(OSError):
             tmp.unlink(missing_ok=True)
