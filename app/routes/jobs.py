@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import mimetypes
+import subprocess
+import sys
 import uuid
 from pathlib import Path as FilePath
 from pathlib import PurePosixPath
@@ -68,6 +70,30 @@ def _validate_output_path(path: str) -> str:
     if ".." in parts or any(p.startswith(".") for p in parts):
         raise HTTPException(status_code=400, detail="Invalid path")
     return normalized
+
+
+def _reveal_path(path: FilePath) -> str:
+    """Reveal a path in the local file manager, selecting the file when supported."""
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    if sys.platform == "darwin":
+        cmd = ["open", "-R", str(path)]
+        message = f"Revealed {path.name} in Finder"
+    elif sys.platform == "win32":
+        cmd = ["explorer", f"/select,{path}"]
+        message = f"Revealed {path.name} in Explorer"
+    else:
+        cmd = ["xdg-open", str(path.parent)]
+        message = f"Opened {path.parent}"
+
+    try:
+        subprocess.Popen(cmd)  # noqa: S603
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to reveal file: {exc}"
+        ) from exc
+    return message
 
 
 def _build_outputs_response(
@@ -221,6 +247,19 @@ async def stream_logs(
             await asyncio.sleep(0.3)
 
     return EventSourceResponse(event_generator())
+
+
+@router.post("/jobs/{job_id}/logs/reveal")
+async def reveal_log_file(
+    job_id: Annotated[str, Path()],
+    store: Annotated[JobStore, Depends(get_store)],
+) -> dict[str, str]:
+    """Reveal the persisted log file in the local file manager."""
+    require_job(store, job_id)
+    log_path = store.get_log_path(job_id)
+    if log_path is None:
+        raise HTTPException(status_code=500, detail="Persistence not configured")
+    return {"message": _reveal_path(log_path)}
 
 
 @router.get("/jobs/{job_id}/outputs", response_model=JobOutputsResponse)

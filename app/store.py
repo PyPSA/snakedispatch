@@ -101,7 +101,7 @@ class JobStore:
         target = job_dir.joinpath("job.json")
         tmp = target.with_suffix(".json.tmp")
         tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.rename(target)
+        tmp.replace(target)
 
     def flush_logs_to_disk(self, job_id: str) -> None:
         """Batch write unflushed log lines to disk."""

@@ -381,6 +381,25 @@ class TestSyncSnkmtDb:
 
         assert not local_path.exists()
 
+    async def test_noop_when_source_and_destination_are_same(self, backend, tmp_path):
+        import sqlite3
+
+        work_dir = tmp_path / "scratch" / "jobs" / "job-self-sync"
+        work_dir.mkdir(parents=True)
+        src_db = work_dir / "snkmt.db"
+        conn = sqlite3.connect(str(src_db))
+        conn.execute("CREATE TABLE workflows (id TEXT PRIMARY KEY)")
+        conn.execute("INSERT INTO workflows VALUES ('wf-1')")
+        conn.commit()
+        conn.close()
+
+        await backend.sync_snkmt_db("job-self-sync", str(work_dir), src_db)
+
+        conn2 = sqlite3.connect(str(src_db))
+        rows = conn2.execute("SELECT id FROM workflows").fetchall()
+        conn2.close()
+        assert rows == [("wf-1",)]
+
 
 class TestCheckConnectivity:
     async def test_returns_true(self, backend):

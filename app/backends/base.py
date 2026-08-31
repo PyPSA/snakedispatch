@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
 from abc import ABC, abstractmethod
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
@@ -122,7 +123,12 @@ class ComputeBackend(ABC):
                 f"{resolved_ref}:{job_ref}",
             )
 
-            # 4. Create worktree (detached HEAD)
+            # 4. Create worktree (detached HEAD).
+            # Prune stale entries first, then remove any leftover directory so a
+            # retry after a failed/cancelled run doesn't hit "already exists".
+            await self._run_git_cmd("git", "-C", repo_dir, "worktree", "prune")
+            if Path(work_dir).exists():
+                shutil.rmtree(work_dir)
             await self._run_git_cmd(
                 "git",
                 "-C",

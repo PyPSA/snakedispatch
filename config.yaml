@@ -1,0 +1,7 @@
+local:
+  scratch_dir: /Users/mikoding/Documents/mikoding/snakedispatch/data/scratch
+  pixi_path: /Users/mikoding/.pixi/bin/pixi
+  poll_interval: 5
+  default_snakemake_args: ["--cores", "1"]
+
+DATA_DIR: /Users/mikoding/Documents/mikoding/snakedispatch/data
